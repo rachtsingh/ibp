@@ -9,6 +9,20 @@ class FiniteVI(nn.Module):
     This model implements mean-field VI via coordinate ascent
     (elsewhere referred to as CAVI) using a finite truncation
     (i.e., Appendix C in http://mlg.eng.cam.ac.uk/pub/pdf/DosMilVanTeh09b.pdf)
+    
+    
+    Generative Model:
+    pi_k ~ Beta(alpha/K,1)          for k in {1,...,K}
+    z_nk ~ Bernoulli(pi_k)          for k in {1,...,K}, n in {1,...,N}
+    A_k ~ Normal(0, sigma_a^2 I)    for k in {1,...,K}
+    X_n ~ Normal(Z_n.A, sigma_n^2 I)for n in {1,...,N}
+
+    Variational Distributions:
+
+    q(pi_k) = Beta(pi_k;tau_k1,tau_k2)
+    q(A_k) = Normal(A_k;phi,phi_var)
+    q(z_nk) = Bernoulli(z_nk;nu_nk)
+    
     """
     def __init__(self, alpha, K, sigma_a, sigma_n, D):
         # idempotent - all are constant and have requires_grad=True
