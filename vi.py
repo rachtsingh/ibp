@@ -18,7 +18,6 @@ class FiniteVI(nn.Module):
     X_n ~ Normal(Z_n.A, sigma_n^2 I)for n in {1,...,N}
 
     Variational Distributions:
-
     q(pi_k) = Beta(pi_k;tau_k1,tau_k2)
     q(A_k) = Normal(A_k;phi,phi_var)
     q(z_nk) = Bernoulli(z_nk;nu_nk)
