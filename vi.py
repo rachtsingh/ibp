@@ -9,7 +9,21 @@ class FiniteVI(nn.Module):
     This model implements mean-field VI via coordinate ascent
     (elsewhere referred to as CAVI) using a finite truncation
     (i.e., Appendix C in http://mlg.eng.cam.ac.uk/pub/pdf/DosMilVanTeh09b.pdf)
+    
+    Generative Model:
+    pi_k ~ Beta(alpha/K,1)            for k in {1,...,K}
+    z_nk ~ Bernoulli(pi_k)            for k in {1,...,K}, n in {1,...,N}
+    A_k ~ Normal(0, sigma_a^2 I)      for k in {1,...,K}
+    X_n ~ Normal(Z_n.A, sigma_n^2 I)  for n in {1,...,N}
 
+    Variational Distributions:
+    q(pi_k) = Beta(pi_k;tau_k1,tau_k2)
+    q(A_k) = Normal(A_k;phi,phi_var)
+    q(z_nk) = Bernoulli(z_nk;nu_nk)
+
+    Inference:
+    CAVI
+    
     NOTE: must call init_z with a given N to start.
     """
     def __init__(self, alpha, K, sigma_a, sigma_n, D):
@@ -47,6 +61,8 @@ class FiniteVI(nn.Module):
         """
         @param tau: (K, 2)
         @return: (K,)
+        
+        Computes Cross Entropy: E_q(pi) [logp(pi_k|alpha)]
         """
         return self.alpha.log() - self.K.log() + (self.alpha/self.K - 1) * \
             (digamma(tau[:, 0]) - digamma(tau.sum(dim=1)))
@@ -56,6 +72,8 @@ class FiniteVI(nn.Module):
         @param nu: (N, K)
         @param tau: (K, 2)
         @return: (N, K)
+        
+        Computes Cross Entropy: E_q(pi),q(Z) [logp(z_nk|pi_k)]
         """
         return nu * digamma(tau[:, 0]) + (1. - nu) * digamma(tau[:, 1]) - digamma(tau.sum(dim=1))
 
@@ -66,6 +84,8 @@ class FiniteVI(nn.Module):
         @return: ()
 
         NOTE: must return () because torch.trace doesn't allow specifying axes
+        
+        Computes Cross Entropy: E_q(A) [logp(A_k|sigma_a^2 I)]
         """
         ret = 0
         constant = -0.5 * self.D * (self.sigma_a.log() + LOG_2PI)
@@ -81,6 +101,8 @@ class FiniteVI(nn.Module):
         @param phi_var: (K, D, D)
         @param phi: (K, D)
         @return: ()
+
+        Computes Likelihood: E_q(Z),q(A) [logp(X_n|Z_n,A,sigma_n^2 I)]
         """
         N, _ = X.shape
         K, D = self.K, self.D # for notational simplicity
@@ -107,6 +129,8 @@ class FiniteVI(nn.Module):
         @param phi_var: (K, D, D)
         @param nu: (N, K)
         @return: ()
+
+        Computes Entropy H[q] for all variational distributions q
         """
         entropy_q_pi = (tau.lgamma().sum(1) - tau.sum(1).lgamma() - \
             (tau[:, 0] - 1) * digamma(tau[:, 0]) - \
@@ -116,3 +140,4 @@ class FiniteVI(nn.Module):
         for k in self.K:
             entropy_q_A += 0.5 * (self.D * (1 + LOG_2PI) + torch.logdet(phi_var[k])).sum()
         entropy_q_z = -(nu * nu.log() + (1 - nu) * (1 - nu).log()).sum()
+        return entropy_q_pi + entropy_q_A + entropy_q_z
