@@ -9,6 +9,8 @@ class FiniteVI(nn.Module):
     This model implements mean-field VI via coordinate ascent
     (elsewhere referred to as CAVI) using a finite truncation
     (i.e., Appendix C in http://mlg.eng.cam.ac.uk/pub/pdf/DosMilVanTeh09b.pdf)
+
+    NOTE: must call init_z with a given N to start.
     """
     def __init__(self, alpha, K, sigma_a, sigma_n, D):
         # idempotent - all are constant and have requires_grad=True
@@ -18,9 +20,30 @@ class FiniteVI(nn.Module):
         self.sigma_n = torch.tensor(sigma_n)
         self.D = torch.tensor(D)
 
-        # init something?
+        # we don't know N, but we'll still initialize everything else
+        self.init_variables()
 
-    def _1_feature_prob(tau):
+    def init_variables(N=100):
+        self.tau = nn.Parameter(torch.rand(self.K, 2))
+        self.phi = nn.Parameter(torch.randn(self.K, self.D))
+        self.phi_var = nn.Parameter(torch.zeros(self.K, self.D, self.D))
+        for k in self.K:
+            self.phi_var[k] = torch.eye(self.D)
+
+    def init_z(N=100):
+        self.nu = nn.Parameter(torch.rand(N, self.K))
+
+    def elbo(X):
+        """
+        This is the evidence lower bound evaluated at X, when X is of shape (N, D)
+        i.e. log p_K(X | theta) \geq ELBO
+        """
+        return self._1_feature_prob(self.tau).sum() + \
+               self._2_feature_assign(self.nu, self.tau).sum() + \
+               self._3_feature_prob(self.phi_var, self.phi).sum() + \
+               self._4_likelihood(X, self.)
+
+    def _1_feature_prob(self, tau):
         """
         @param tau: (K, 2)
         @return: (K,)
@@ -28,7 +51,7 @@ class FiniteVI(nn.Module):
         return self.alpha.log() - self.K.log() + (self.alpha/self.K - 1) * \
             (digamma(tau[:, 0]) - digamma(tau.sum(dim=1)))
 
-    def _2_feature_assign(nu, tau):
+    def _2_feature_assign(self, nu, tau):
         """
         @param nu: (N, K)
         @param tau: (K, 2)
@@ -36,7 +59,7 @@ class FiniteVI(nn.Module):
         """
         return nu * digamma(tau[:, 0]) + (1. - nu) * digamma(tau[:, 1]) - digamma(tau.sum(dim=1))
 
-    def _3_feature_prob(phi_var, phi):
+    def _3_feature_prob(self, phi_var, phi):
         """
         @param phi_var: (K, D, D)
         @param phi: (K, D)
@@ -51,13 +74,13 @@ class FiniteVI(nn.Module):
                 (torch.trace(phi_var[k]) + phi[k].pow(2).sum())
             ret += constant + other_term
 
-    def _4_likelihood(X, nu, phi_var, phi):
+    def _4_likelihood(self, X, nu, phi_var, phi):
         """
         @param X: (N, D)
         @param nu: (N, K)
         @param phi_var: (K, D, D)
         @param phi: (K, D)
-        @return: 
+        @return: ()
         """
         N, _ = X.shape
         K, D = self.K, self.D # for notational simplicity
@@ -78,5 +101,18 @@ class FiniteVI(nn.Module):
 
         return constant + nonconstant
 
-    def _5_entropy(tau, phi_var, nu):
-        
+    def _5_entropy(self, tau, phi_var, nu):
+        """
+        @param tau: (K, 2)
+        @param phi_var: (K, D, D)
+        @param nu: (N, K)
+        @return: ()
+        """
+        entropy_q_pi = (tau.lgamma().sum(1) - tau.sum(1).lgamma() - \
+            (tau[:, 0] - 1) * digamma(tau[:, 0]) - \
+            (tau[:, 1] - 1) * digamma(tau[:, 1]) + \
+            (tau.sum(1) - 2.) * digamma(tau.sum(1))).sum()
+        entropy_q_A = 0
+        for k in self.K:
+            entropy_q_A += 0.5 * (self.D * (1 + LOG_2PI) + torch.logdet(phi_var[k])).sum()
+        entropy_q_z = -(nu * nu.log() + (1 - nu) * (1 - nu).log()).sum()
