@@ -37,6 +37,8 @@ class FiniteVI(nn.Module):
         """
         @param tau: (K, 2)
         @return: (K,)
+        
+        Computes Cross Entropy: E_q(pi) [logp(pi_k|alpha)]
         """
         return self.alpha.log() - self.K.log() + (self.alpha/self.K - 1) * \
             (digamma(tau[:, 0]) - digamma(tau.sum(dim=1)))
@@ -46,6 +48,8 @@ class FiniteVI(nn.Module):
         @param nu: (N, K)
         @param tau: (K, 2)
         @return: (N, K)
+        
+        Computes Cross Entropy: E_q(pi),q(Z) [logp(z_nk|pi_k)]
         """
         return nu * digamma(tau[:, 0]) + (1. - nu) * digamma(tau[:, 1]) - digamma(tau.sum(dim=1))
 
@@ -56,6 +60,8 @@ class FiniteVI(nn.Module):
         @return: ()
 
         NOTE: must return () because torch.trace doesn't allow specifying axes
+        
+        Computes Cross Entropy: E_q(A) [logp(A_k|sigma_a^2 I)]
         """
         ret = 0
         constant = -0.5 * self.D * (self.sigma_a.log() + LOG_2PI)
@@ -71,6 +77,8 @@ class FiniteVI(nn.Module):
         @param phi_var: (K, D, D)
         @param phi: (K, D)
         @return: 
+
+        Computes Likelihood: E_q(Z),q(A) [logp(X_n|Z_n,A,sigma_n^2 I)]
         """
         N, _ = X.shape
         K, D = self.K, self.D # for notational simplicity
@@ -92,4 +100,19 @@ class FiniteVI(nn.Module):
         return constant + nonconstant
 
     def _5_entropy(tau, phi_var, nu):
-        
+        """
+
+        Computes Entropy H[q] for all variational distributions q()
+        """
+
+
+
+
+
+
+
+
+
+
+
+
