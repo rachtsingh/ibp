@@ -1,0 +1,152 @@
+\RequirePackage{comment}
+\RequirePackage{fullpage}
+
+% standard includes (from Gaitsgory's sty file)
+\RequirePackage{amsfonts,latexsym,amsthm,amssymb,amsmath,euscript}
+\RequirePackage{mathrsfs,manfnt,enumitem,stmaryrd}
+% \RequirePackage[super]{nth}
+\RequirePackage{setspace}
+\RequirePackage{titlesec}
+\RequirePackage{framed}
+\RequirePackage{verbatim}
+\RequirePackage{xcolor}
+\RequirePackage{calc,color}
+\RequirePackage{amsxtra}
+\RequirePackage[utf8]{inputenc}
+%\RequirePackage{eucal}
+% \RequirePackage[all]{xy}
+\RequirePackage{graphicx}
+\RequirePackage[singlelinecheck=false]{caption}
+\RequirePackage{subcaption}
+\RequirePackage{varwidth}
+\RequirePackage[geometry]{ifsym}
+\RequirePackage{hyperref}
+    \hypersetup{colorlinks=true,citecolor=blue,urlcolor=black,linkbordercolor={1 0 0}}
+\RequirePackage[capitalise]{cleveref}
+\RequirePackage{mathtools}
+\RequirePackage{pifont}
+\RequirePackage{tikz}
+\RequirePackage{tikz-cd}
+\usetikzlibrary{matrix,arrows,decorations.pathmorphing}
+
+\RequirePackage{titling}
+
+\RequirePackage[
+    citestyle=authoryear,
+    natbib=true,
+    backend=bibtex]{biblatex}
+
+% custom commands here
+\newcommand{\sub}{\operatorname{sub}}
+\newcommand{\quot}{\operatorname{quot}}
+\newcommand{\bw}{\bigwedge}
+\newcommand{\Avs}{\operatorname{Av}^{\operatorname{sign}}}
+\newcommand{\bad}{\operatorname{bad}}
+\newcommand{\sign}{\operatorname{sign}}
+\newcommand{\id}{\operatorname{id}}
+\newcommand{\defeq}{\vcentcolon=}
+\newcommand{\eqdef}{=\vcentcolon}
+\newcommand{\nc}{\newcommand}
+\nc{\on}{\operatorname}
+\nc\renc{\renewcommand}
+\nc{\BR}{\mathbb R}
+\nc{\BG}{\mathbb G}
+\nc{\BP}{\mathbb P}
+\nc{\BC}{\mathbb C}
+\nc{\BQ}{\mathbb Q}
+\nc{\BF}{\mathbb F}
+\nc{\BZ}{\mathbb Z}
+\nc{\BN}{\mathbb N}
+\nc{\BS}{\mathbb S}
+\nc{\Hom}{\on{Hom}}
+\nc{\wt}{\widetilde}
+\nc{\vspan}{\on{span}}
+\nc{\ord}{\on{ord}}
+\nc{\im}{\on{im}}
+\nc{\Mat}{\on{Mat}}
+\nc{\can}{\on{can}}
+\nc{\coker}{\on{coker}}
+\nc{\ev}{\on{ev}}
+\nc{\Tr}{\on{Tr}}
+\nc{\End}{\on{End}}
+\nc{\swap}{\on{swap}}
+\nc{\Set}{\on{Set}}
+\nc{\bC}{{\mathbf C}}
+\nc{\bc}{{\mathbf c}}
+\nc{\bD}{{\mathbf D}}
+\nc{\bd}{{\mathbf d}}
+\nc{\bE}{{\mathbf E}}
+\nc{\be}{{\mathbf e}}
+\nc{\bF}{{\mathbf F}}
+\nc{\bff}{{\mathbf f}}
+\nc{\CE}{\mathcal E}
+\nc{\CD}{\mathcal D}
+\nc{\CH}{\mathcal H}
+\nc{\CY}{\mathcal Y}
+\nc{\CN}{\mathcal N}
+\renc{\mod}{\on{-mod}} %Careful - turn this off in a number theory setting
+\newcommand{\spec}{\text{spec}}
+\nc{\adj}{\on{adj}}
+\nc{\tensor}[3]{#1 \underset{#2}\otimes #3}
+\nc{\Nat}{\on{Nat}}
+\nc{\op}{\on{op}}
+\nc{\Funct}{\on{Funct}}
+\nc{\Ob}{\on{Ob}}
+\nc{\fR}{\mathfrak{R}}
+\nc{\Vect}{\on{Vect}}
+\nc{\ns}{\on{non-spec}}
+\nc{\ol}{\overline}
+\nc{\ul}{\underline}
+\nc{\univ}{\on{univ}}
+\nc{\Maps}{\on{Maps}}
+\nc{\bdd}{\on{bdd}}
+\nc{\cont}{\on{cont}}
+\nc{\Sym}{\on{Sym}}
+\nc{\vol}{\on{vol}}
+\nc{\supp}{\on{supp}}
+\nc{\Lie}{\on{Lie}}
+\nc{\master}{\on{master}}
+\nc{\pt}{\on{pt}}
+
+\nc{\dx}{\on{dx}}
+\nc{\dy}{\on{dy}}
+\nc{\dz}{\on{dz}}
+\nc{\dr}{\on{dr}}
+\nc{\don}{\on{do}}
+\nc{\dtheta}{\on{d}\theta}
+\nc{\hleft}{h_{\shortrightarrow}}
+\nc{\hleftt}{h_{\shortrightarrow, t}}
+\nc{\hright}{h_{\shortleftarrow}}
+\nc{\hrightt}{h_{\shortleftarrow, t}}
+
+% \renewcommand{\v}[1]{\mathbf{#1}}
+\RequirePackage{bm}
+\renewcommand{\v}[1]{\bm{#1}}
+
+% custom rachit code
+% \everymath{\displaystyle}
+\newcommand{\Var}{\on{Var}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Bern}{\on{Bern}}
+\newcommand{\Beta}{\on{Beta}}
+\newcommand{\Kumar}{\on{Kumaraswamy}}
+\newcommand{\Expo}{\on{Expo}}
+\newcommand{\Prob}{\mathbb{P}}
+\newcommand{\Like}{{\mathcal L}}
+\newcommand{\norm}[1]{\left\lVert#1\right\rVert}
+\newcommand{\inprod}[1]{\left\langle#1\right\rangle}
+\definecolor{textgrey}{HTML}{BBBBBB}
+\newenvironment{problem}{\par\color{blue}}{\par}
+\DeclarePairedDelimiter\ceil{\lceil}{\rceil}
+\DeclarePairedDelimiter\floor{\lfloor}{\rfloor}
+\DeclarePairedDelimiter\abs{\lvert}{\rvert}%
+
+\DeclarePairedDelimiterX{\infdivx}[2]{(}{)}{%
+  #1\;\delimsize\|\;#2%
+}
+\newcommand{\kldiv}{\on{KL}\infdivx}
+\newcommand{\entropy}{\mathbb{H}}
+
+\newcommand{\chline}{\noindent\rule{\textwidth}{1pt}}
+\newcommand{\startline}{\vspace{0.5em}\hrule\vspace{-0.5em}}
+\newcommand{\finishline}{\hrule\vspace{0.5em}}

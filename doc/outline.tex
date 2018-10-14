@@ -1,0 +1,91 @@
+\documentclass[a4paper, 11pt]{article}
+\usepackage{template}
+
+\title{Inference for Indian Buffet Processes}
+\author{}
+\addbibresource{references.bib}
+
+\begin{document}
+\maketitle
+\tableofcontents
+
+\section{Taxonomy of Inference for IBP}
+This is in rough temporal order of papers published about these methods. By (perhaps?) coincidence, this also corresponds to an order of decrease in theoretical quality of posterior inference and an increase in the scalability or speed.
+
+\subsection{Gibbs sampling}
+
+The main reference is \citet{ghahramani2006infinite}, however \citet{doshi2009report} gives a clear explanation of both the collapsed and uncollapsed Gibbs samplers which proves useful for implementation.
+
+\medskip
+
+There are two major variants: \textbf{collapsed} and \textbf{uncollapsed} (depending on whether, in the linear Gaussian generative model, $A$ is marginalized over).
+
+\medskip
+
+However, there are a number of tweaks and improvements worth noting:
+\begin{enumerate}
+    \item MH split/merge proposals \citep{meeds2007modeling}
+    \item slice sampling \citep{teh2007stick}
+    \item particle filtering \citep{wood2007particle}
+    \item accelerated collapsed Gibbs sampling  \citep{doshi2009accelerated}
+\end{enumerate}
+
+\subsection{Coordinate Ascent Variational Inference (CAVI)}
+By CAVI we mean mean-field variatonal inference \citep{beal2003variational, wainwright2008graphical}. In this method, we factor the variational posterior into one component for each variable, and then compute the coordinate-wise updates by solving the maximization problem in one step (and repeat for each variable).
+
+\medskip
+
+The major reference here is \citet{doshi2009variational}, which implements CAVI using a truncated posterior approximation to both (1) finite approximation to the IBP and (2) the IBP, for linear Gaussian models.
+
+\subsection{Stochastic Variatonal Inference (SVI)}
+By stochastic\footnote{This is \emph{stochastic} in the sense of Robbins \& Munro.} variatonal inference (SVI) we mean the method of \citet{hoffman2013stochastic}, which introduces batch-based approximate updates to global parameters via CAVI.
+
+\medskip
+
+The main reference here (one of many) is \citet{shah2015empirical}, which does a (remarkably thorough) investigation into the different kinds of SVI algorithms that can be applied (especially looking into different kind of approximations, structured or not).
+
+\subsection{Autograd on exact ELBO VI (ADVI-exact)}
+This is a method for which we are looking for sources (it seems likely that we are the first to implement it solely because we have the technology to do so).
+
+\medskip
+
+Essentially, from \citet{doshi2009report} we have an exact\footnote{What about the $\E[\text{log stick}]$ term?} form for the ELBO for a particular dataset $X$. So, we can do gradient ascent on this term directly via autograd.
+
+\medskip
+
+Note that this is different from the usual method employed in VAEs, where the ELBO is sampled - here the ELBO is exact.
+
+\subsection{Autograd on sampled ELBO (ADVI)}
+This is essentially the same as the above, except that we sample the ELBO to get our estimate. In theory this isn't marked different from ADVI-exact if we use reparametrization gradients\footnote{Which is pretty much all the time these days}, but this is a theoretical assumption. In many models it's impossible to do ADVI-exact, but ADVI in general is often possible.
+
+\subsection{Variational Autoencoders (VAE)}
+In this method, the main difference is the addition of \emph{amortization}, i.e. a map from $x \to \lambda(x)$ for the variational distribution $q(z, \pi; \lambda)$. Note that this limits the variational posterior, so in theory this method should be less effective than regular CAVI as a mean-field method.
+
+\medskip
+
+The two main references for this are \citet{singhstructured, chatzis2018indian} (note: the former is an earlier version of this work, and the latter has changed many times since its original publication in 2014). However, it recently came to our attention that \citet{fanscalable} also attempts to apply the same method\footnote{TODO: we need to get a comparison of the quality of each of these methods}.
+
+\subsection{Semi-amortized Variational Autoencoders (SA-VAE)}
+This is a reference to \citet{kim2018semi}, which essentially blurs the line between SVI and VAEs by "semi-amortizing"\footnote{Since the line is, I guess, amortization}. Note that \citet{cremer2018inference,krishnan2018challenges,hjelm2016iterative} are also recent works that consider the amortization gap - \citet{kim2018semi} is perhaps the most successful but maybe the most difficult to implement.
+
+\section{What does inference mean?}
+We have to make a clear distinction between the two types of inference\footnote{We take it as given (since this is a nonparametric Bayesian method) that what we care about is the (approximate) posterior, whether it's a parametrized distribution or samples from that distribution.} that we care about: (1) inference on \textbf{local} variables (i.e. $z_{nk}$) and (2) inference on \textbf{global} variables (i.e. $A, \pi$).
+
+\section{Structured vs. Mean Field}
+Several papers tackle which should be used. \citet{shah2015empirical} found that using a variational approximation that maintains local-local dependencies was more important than the difference between mean-field and structured posteriors. See also \citet{maaloe2016auxiliary} for a 'VAE'-like construction of the same idea.
+
+\section{Research Questions}
+Feel free to add more questions here as you come up with them. Let's try our best to answer each question with a set of experiments, each in a separate Python script.
+\begin{enumerate}
+    \item \textbf{\texttt{data\_efficiency}}: Which inference algorithm is the most data efficient? Again, theoretically speaking the farther down we go, the less 'flexible' the approximate posterior, in some ways (though there are significant exceptions, like in the 'SVI' algorithms in \citet{shah2015empirical} the variational approximations are \emph{more rich} than in the mean-field CAVI of \citet{doshi2009variational}, and SA-VAE is certainly more rich than the VAE), but there are other tradeoffs that might effect data efficiency - for example, amortizing the inference might restrict the \emph{flexibility} but we might learn faster because information is shared between data points. However for the purpose of this question we only consider the \emph{data efficiency}, not the speed.
+    \item \textbf{\texttt{advi\_exact\_cavi}}: Is it reasonable to assume that ADVI-exact is \emph{just as good} as CAVI? Technically if the loss is convex they should be, however we know from \citet{doshi2009report}\footnote{See Section 3} that the loss \emph{is not convex}, so we don't know which is a better algorithm. In fact this may vary a lot based on hyperparameters (e.g. learning rate schedule, initialization\footnote{At least in the case of learning rate schedules we can use the same initialization! So we can check the trajectories and compare them over time. This will make for a neat plot.}) \emph{or} the choice of optimization algorithm. Luckily in the case of CAVI there aren't many choices, besides update schedules, so it shouldn't be too hard to find the "best" version.
+    \item \textbf{\texttt{speed}}: Do we care about the speed of each algorithm? Finale seemed to care about it, but hopefully modern computers (and PyTorch) are fast enough that we don't really care about this anymore for reasonably sized datasets.
+    \item \textbf{\texttt{conjugacy}}: One of the selling points of the IBP-VAE is that we could build \emph{non-conjugate} generative models, i.e. models where the prior and the posterior don't match. However, we found that using non-conjugate generative models led to strange "shelf-like" behavior in the posterior over $z$. The methods above that allow for non-conjugate generative models are: ADVI (sometimes ADVI-exact), VAE, SA-VAE. There are two subquestions I'm interested in:
+    \begin{enumerate}
+        \item Are the methods that allow for non-conjugate inference \emph{much worse} than the ones that don't?\footnote{In which case, it doesn't matter if we can 'fit' non-conjugate models, if we're not fitting them at all, right?}
+        \item If they are, what's going on with these models? Do we just not have enough data to get started fitting them? One possibility (which I consider likely) is that \emph{gradient descent} wasn't the problem, but \emph{amortization} was.
+    \end{enumerate}
+\end{enumerate}
+
+\printbibliography
+\end{document}
