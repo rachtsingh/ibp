@@ -4,7 +4,7 @@ from torch import digamma
 
 LOG_2PI = 1.8378770664093453
 
-class FiniteCAVI(nn.Module):
+class FiniteIBP(nn.Module):
     """
     This model implements mean-field VI via coordinate ascent
     (elsewhere referred to as CAVI) using a finite truncation, but with finite prior
@@ -141,7 +141,7 @@ class FiniteCAVI(nn.Module):
         entropy_q_z = -(nu * nu.log() + (1 - nu) * (1 - nu).log()).sum()
         return entropy_q_pi + entropy_q_A + entropy_q_z
 
-class InfiniteCAVI(nn.Module):
+class InfiniteIBP(nn.Module):
     """
     This model implements mean-field VI via coordinate ascent
     (elsewhere referred to as CAVI) using a finite truncation, but with infinite prior
@@ -208,14 +208,10 @@ class InfiniteCAVI(nn.Module):
         return self.alpha.log() + (self.alpha - 1) * \
             (digamma(tau[:, 0]) - digamma(tau.sum(dim=1)))
 
-    def _2_feature_assign(self, nu, tau):
-        """
-        @param nu: (N, K)
-        @param tau: (K, 2)
-        @return: (N, K)
 
-        Computes Cross Entropy: E_q(v),q(Z) [logp(z_nk|v)]
-        """
+    # TODO WORK IN PROGRESS: FINISH / ReWRITE / CHECK / DEBUG THIS FUNCTION
+    def _E_log_stick(self,tau):
+
         # TODO rewrite this in a smarter way
         q = torch.zeros(self.K,self.K)
         for k in range(self.K):
@@ -226,18 +222,27 @@ class InfiniteCAVI(nn.Module):
                 for m in range(i):
                     q[k][i] -= digammma(tau[m,0] + tau[m,1])
 
-        # TODO check that this normalization is correct
-        # Want each row q[k,:] to sum to 1
-        import torch.nn.functional as f
-        f.normalize(q,p=1,dim=1)
+        q = torch.nn.functional.normalize(q,p=1,dim=1)
+        first = (q * digamma(tau[,1])).sum(1)
+        second = torch.zeros(self.K) # TODO
+        third = torch.zeros(self.K) # TODO
+        temp_q = q.clone()
+        temp_q[q==0] += 1.
+        fourth = (temp_q * temp_q.log()).sum(1)
+        E_log_stick = first + second + third + fourth
+        return E_log_stick
+    
+    # TODO WORK IN PROGRESS: FINISH / ReWRITE / CHECK / DEBUG THIS FUNCTION
+    def _2_feature_assign(self, nu, tau):
+        """
+        @param nu: (N, K)
+        @param tau: (K, 2)
+        @return: (N, K)
 
-        # TODO E log stick term that makes use of the above q tensor
-        E_log stick = 0
-        
-        # TODO Check that this outer sum() sums over k
-        return nu * (digammma(tau[:,1]) - digamma(tau.sum(dim=1))).sum() + \
-            (1. - nu) * E_log_stick
-
+        Computes Cross Entropy: E_q(v),q(Z) [logp(z_nk|v)]
+        """
+        return nu * (digammma(tau[:,1]) - digamma(tau.sum(dim=1))) + \
+            (1. - nu) * self._E_log_stick(tau)
 
     def _3_feature_prob(self, phi_var, phi):
         """
