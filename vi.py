@@ -6,9 +6,10 @@ LOG_2PI = 1.8378770664093453
 
 class FiniteIBP(nn.Module):
     """
-    This model implements mean-field VI via coordinate ascent
-    (elsewhere referred to as CAVI) using a finite truncation, but with finite prior
-    (i.e., Section 4 in http://mlg.eng.cam.ac.uk/pub/pdf/DosMilVanTeh09b.pdf)
+    
+    Finite/Truncated Approximation of the Indian Buffet Process
+    with mean-field variational posterior approximation.
+    Section 4 in http://mlg.eng.cam.ac.uk/pub/pdf/DosMilVanTeh09b.pdf
 
     Generative Model:
     pi_k ~ Beta(alpha/K,1)            for k in {1,...,K}
@@ -143,14 +144,11 @@ class FiniteIBP(nn.Module):
 
 class InfiniteIBP(nn.Module):
     """
-    This model implements mean-field VI via coordinate ascent
-    (elsewhere referred to as CAVI) using a finite truncation, but with infinite prior
-    (i.e., Section 5 in http://mlg.eng.cam.ac.uk/pub/pdf/DosMilVanTeh09b.pdf)
-    
-    
-    Generative Model:
-    
-    
+    Infinite/Non-Truncated Indian Buffet Process
+    with a mean-field variational posterior approximation. 
+    Section 5 in http://mlg.eng.cam.ac.uk/pub/pdf/DosMilVanTeh09b.pdf
+
+    Generative Model:    
     v_k ~ Beta(alpha,1)               for k in {1,...,inf}
     pi_k = product_{i=1}^k v_i        for k in {1,...,inf}
     z_nk ~ Bernoulli(pi_k)            for k in {1,...,inf}, n in {1,...,N}
