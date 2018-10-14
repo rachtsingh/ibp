@@ -211,7 +211,9 @@ class InfiniteIBP(nn.Module):
     def _E_log_stick(self, tau):
         """
         @param tau: (K, 2)
-        @return: (K,)
+        @return: ((K,), (K, K))
+
+        where the first return value is E_log_stick, and the second is q
         """
         q = torch.digamma()
 
@@ -235,7 +237,7 @@ class InfiniteIBP(nn.Module):
         temp_q = q.clone() # TODO: why clone?
         temp_q[q == 0] = 1. # since half of q is 0, log(1) is now a mask
         fourth = (temp_q * temp_q.log()).sum(1)
-        return first + second + third + fourth
+        return first + second + third + fourth, q
 
     def _2_feature_assign(self, nu, tau):
         """
@@ -246,7 +248,7 @@ class InfiniteIBP(nn.Module):
         Computes Cross Entropy: E_q(v),q(Z) [logp(z_nk|v)]
         """
         return nu * (digammma(tau[:,1]) - digamma(tau.sum(dim=1))).cumsum() + \
-            (1. - nu) * self._E_log_stick(tau)
+            (1. - nu) * self._E_log_stick(tau)[0]
 
     def _3_feature_prob(self, phi_var, phi):
         """
@@ -318,7 +320,34 @@ class InfiniteIBP(nn.Module):
         return entropy_q_v + entropy_q_A + entropy_q_z
 
     def cavi(self, X):
-        pass
+        """
+        TODO: should this function have arguments?
+        There are so many dumb terms in this
+        """
+        N, K, D = self.N, self.K, self.D
+        # update q(A)
+        for k in range(K):
+            precision = (1./(self.sigma_a ** 2) + self.nu[:, k].sum()/(self.sigma_n**2))
+            self.phi_var[k] = torch.eye(self.D) / precision
+            self.phi[k] = (nu * (X - (self.nu @ self.phi - self.nu[:, k].view((N, 1)) * \
+                                                           self.phi[k].view((1, D))))).sum(0) / (self.sigma_n ** 2)
+        # update q(z)
+        # we shouldn't vectorize this I think (TODO: discuss)
+        for k in range(K):
+            for n in range(N):
+                first_term = (digamma(tau[:k+1, 1]) - digamma(tau.sum(1)[:k+1])).sum() - \
+                    self._E_log_stick(self.tau)[0][k]
+                other_prod = (self.nu @ self.phi - self.nu[:, k].view((N, 1)) * self.phi[k].view((1, D)))[n]
+                second_term = -0.5 / (self.sigma_n ** 2) * (torch.trace(self.phi_var[k]) + self.phi[k].pow(2).sum()) + \
+                    (self.phi[k] @ (X[n] - other_prod))/ (self.sigma_n ** 2)
+                self.nu[n][k] = 1./(1. + (-(first_term + second_term)).exp())
+
+        # update q(pi)
+        for k in range(K):
+            q = self._E_log_stick(self.tau)[1]
+            self.tau[k][0] = self.alpha + self.nu[:, k:].sum() + \
+                ((N - self.nu.sum(0)) * q[:, k+1:].sum(1))[k+1:].sum()
+            self.tau[k][1] = 1 + ((N - self.nu.sum(0)) * q[:, k])[k:].sum()
 
 def fit_infinite_to_ggblocks():
     pass
