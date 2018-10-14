@@ -57,7 +57,8 @@ class FiniteCAVI(nn.Module):
         return self._1_feature_prob(self.tau).sum() + \
                self._2_feature_assign(self.nu, self.tau).sum() + \
                self._3_feature_prob(self.phi_var, self.phi).sum() + \
-               self._4_likelihood(X, self.)
+               self._4_likelihood(X, self.) + \
+               self._5_entropy(self.tau, self.phi_var, self.nu)
 
     def _1_feature_prob(self, tau):
         """
