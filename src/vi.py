@@ -54,7 +54,7 @@ class FiniteIBP(nn.Module):
         return self._1_feature_prob(self.tau).sum() + \
                self._2_feature_assign(self.nu, self.tau).sum() + \
                self._3_feature_prob(self.phi_var, self.phi).sum() + \
-               self._4_likelihood(X, self.) + \
+               self._4_likelihood(X, self.nu, self.phi_var, self.phi) + \
                self._5_entropy(self.tau, self.phi_var, self.nu)
 
     def _1_feature_prob(self, tau):
@@ -166,6 +166,8 @@ class InfiniteIBP(nn.Module):
     NOTE: must call init_z with a given N to start.
     """
     def __init__(self, alpha, K, sigma_a, sigma_n, D):
+        super(InfiniteIBP, self).__init__()
+
         # idempotent - all are constant and have requires_grad=True
         self.alpha = torch.tensor(alpha)
         self.K = torch.tensor(K)
@@ -176,17 +178,17 @@ class InfiniteIBP(nn.Module):
         # we don't know N, but we'll still initialize everything else
         self.init_variables()
 
-    def init_variables(N=100):
+    def init_variables(self, N=100):
         self.tau = nn.Parameter(torch.rand(self.K, 2))
         self.phi = nn.Parameter(torch.randn(self.K, self.D))
         self.phi_var = nn.Parameter(torch.zeros(self.K, self.D, self.D))
-        for k in self.K:
+        for k in range(self.K):
             self.phi_var[k] = torch.eye(self.D)
 
-    def init_z(N=100):
+    def init_z(self, N=100):
         self.nu = nn.Parameter(torch.rand(N, self.K))
 
-    def elbo(X):
+    def elbo(self, X):
         """
         This is the evidence lower bound evaluated at X, when X is of shape (N, D)
         i.e. log p_K(X | theta) \geq ELBO
@@ -194,7 +196,7 @@ class InfiniteIBP(nn.Module):
         return self._1_feature_prob(self.tau).sum() + \
                self._2_feature_assign(self.nu, self.tau).sum() + \
                self._3_feature_prob(self.phi_var, self.phi).sum() + \
-               self._4_likelihood(X, self.) + \
+               self._4_likelihood(X, self.nu, self.phi_var, self.phi) + \
                self._5_entropy(self.tau, self.phi_var, self.nu)
 
     def _1_feature_prob(self, tau):
@@ -215,15 +217,13 @@ class InfiniteIBP(nn.Module):
 
         where the first return value is E_log_stick, and the second is q
         """
-        q = torch.digamma()
-
         # we use the same indexing as in eq. (10)
         q = torch.zeros(self.K, self.K)
 
         # working in log space until the last step
         first_term = digamma(tau[:, 1])
-        second_term = digamma(tau[:, 0]).cumsum() - digamma(tau[:, 0])
-        third_term = digamma(tau.sum(1)).cumsum()
+        second_term = digamma(tau[:, 0]).cumsum(0) - digamma(tau[:, 0])
+        third_term = digamma(tau.sum(1)).cumsum(0)
         q += (first_term + second_term + third_term).view(1, -1)
         q = torch.tril(q).exp()
         q = torch.nn.functional.normalize(q, p=1, dim=1)
@@ -247,7 +247,7 @@ class InfiniteIBP(nn.Module):
 
         Computes Cross Entropy: E_q(v),q(Z) [logp(z_nk|v)]
         """
-        return nu * (digammma(tau[:,1]) - digamma(tau.sum(dim=1))).cumsum() + \
+        return nu * (digamma(tau[:,1]) - digamma(tau.sum(dim=1))).cumsum(0) + \
             (1. - nu) * self._E_log_stick(tau)[0]
 
     def _3_feature_prob(self, phi_var, phi):
@@ -267,6 +267,7 @@ class InfiniteIBP(nn.Module):
             other_term = (-0.5 / (self.sigma_a**2)) * \
                 (torch.trace(phi_var[k]) + phi[k].pow(2).sum())
             ret += constant + other_term
+        return ret
 
     def _4_likelihood(self, X, nu, phi_var, phi):
         """
@@ -285,7 +286,7 @@ class InfiniteIBP(nn.Module):
         constant = -0.5 * D * (self.sigma_n.log() + LOG_2PI)
 
         first_term = X.pow(2).sum()
-        second_term = (-2 * (nu.view(N, K, 1) * phi.view(1, K, D)) * X.view(1, K, D)).sum()
+        second_term = (-2 * (nu.view(N, K, 1) * phi.view(1, K, D)) * X.view(N, 1, D)).sum()
         third_term = 2 * torch.triu((phi @ phi.transpose(0, 1)) * \
                 (nu.transpose(0, 1) @ nu), diagonal=1).sum()
 
@@ -314,7 +315,7 @@ class InfiniteIBP(nn.Module):
             (tau[:, 1] - 1) * digamma(tau[:, 1]) + \
             (tau.sum(1) - 2.) * digamma(tau.sum(1))).sum()
         entropy_q_A = 0
-        for k in self.K:
+        for k in range(self.K):
             entropy_q_A += 0.5 * (self.D * (1 + LOG_2PI) + torch.logdet(phi_var[k])).sum()
         entropy_q_z = -(nu * nu.log() + (1 - nu) * (1 - nu).log()).sum()
         return entropy_q_v + entropy_q_A + entropy_q_z
@@ -349,10 +350,26 @@ class InfiniteIBP(nn.Module):
                 ((N - self.nu.sum(0)) * q[:, k+1:].sum(1))[k+1:].sum()
             self.tau[k][1] = 1 + ((N - self.nu.sum(0)) * q[:, k])[k:].sum()
 
-def fit_infinite_to_ggblocks():
+def fit_infinite_to_ggblocks_cavi():
     pass
+
+def visualize_A(A):
+    from matplotlib import pyplot as plt
+    plt.imshow(A.reshape(6, 6))
+    plt.show()
+
+def fit_infinite_to_ggblocks_advi_exact():
+    from data import generate_gg_blocks, generate_gg_blocks_dataset
+    N = 100
+    X = generate_gg_blocks(100)
+
+    model = InfiniteIBP(4., 6, 0.1, 0.5, 36)
+    model.init_z(100)
+
+    print(model.elbo(X))
 
 if __name__ == '__main__':
     """
     python vi.py will just check that the model works on a ggblocks dataset
     """
+    fit_infinite_to_ggblocks_advi_exact()
