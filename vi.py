@@ -216,10 +216,24 @@ class InfiniteCAVI(nn.Module):
 
         Computes Cross Entropy: E_q(v),q(Z) [logp(z_nk|v)]
         """
+        # TODO rewrite this in a smarter way
+        q = torch.zeros(self.K,self.K)
+        for k in range(self.K):
+            for i in range(self.K):
+                q[k][i] += digammma(tau[i,1])
+                for m in range(i-1):
+                    q[k][i] += digamma(tau[m,0])
+                for m in range(i):
+                    q[k][i] -= digammma(tau[m,0] + tau[m,1])
 
-        # TODO E log stick term
+        # TODO check that this normalization is correct
+        # Want each row q[k,:] to sum to 1
+        import torch.nn.functional as f
+        f.normalize(q,p=1,dim=1)
+
+        # TODO E log stick term that makes use of the above q tensor
         E_log stick = 0
-
+        
         # TODO Check that this outer sum() sums over k
         return nu * (digammma(tau[:,1]) - digamma(tau.sum(dim=1))).sum() + \
             (1. - nu) * E_log_stick
