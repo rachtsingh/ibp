@@ -4,11 +4,11 @@ from torch import digamma
 
 LOG_2PI = 1.8378770664093453
 
-class FiniteVI(nn.Module):
+class FiniteCAVI(nn.Module):
     """
     This model implements mean-field VI via coordinate ascent
-    (elsewhere referred to as CAVI) using a finite truncation
-    (i.e., Appendix C in http://mlg.eng.cam.ac.uk/pub/pdf/DosMilVanTeh09b.pdf)
+    (elsewhere referred to as CAVI) using a finite truncation, but with finite prior
+    (i.e., Section 4 in http://mlg.eng.cam.ac.uk/pub/pdf/DosMilVanTeh09b.pdf)
 
     Generative Model:
     pi_k ~ Beta(alpha/K,1)            for k in {1,...,K}
@@ -23,6 +23,8 @@ class FiniteVI(nn.Module):
 
     Inference:
     CAVI
+
+    TODO: no CAVI is currently implemented
 
     NOTE: must call init_z with a given N to start.
     """
@@ -141,3 +143,22 @@ class FiniteVI(nn.Module):
             entropy_q_A += 0.5 * (self.D * (1 + LOG_2PI) + torch.logdet(phi_var[k])).sum()
         entropy_q_z = -(nu * nu.log() + (1 - nu) * (1 - nu).log()).sum()
         return entropy_q_pi + entropy_q_A + entropy_q_z
+
+class InfiniteCAVI(nn.Module):
+    """
+    This model implements mean-field VI via coordinate ascent
+    (elsewhere referred to as CAVI) using a finite truncation, but with infinite prior
+    (i.e., Section 5 in http://mlg.eng.cam.ac.uk/pub/pdf/DosMilVanTeh09b.pdf)
+    """
+
+"""
+We'll move this code soon - let's get some experiments up to understand what's going on
+"""
+
+def main():
+
+
+if __name__ == '__main__':
+    """
+    python vi.py will just check that the model works on a ggblocks dataset
+    """
