@@ -6,7 +6,7 @@ LOG_2PI = 1.8378770664093453
 
 class FiniteIBP(nn.Module):
     """
-    
+
     Finite/Truncated Approximation of the Indian Buffet Process
     with mean-field variational posterior approximation.
     Section 4 in http://mlg.eng.cam.ac.uk/pub/pdf/DosMilVanTeh09b.pdf
@@ -23,6 +23,7 @@ class FiniteIBP(nn.Module):
     q(z_nk) = Bernoulli(z_nk;nu_nk)
 
     NOTE: must call init_z with a given N to start.
+    TODO: this model isn't finished (because we're working on the InfiniteIBP)
     """
     def __init__(self, alpha, K, sigma_a, sigma_n, D):
         # idempotent - all are constant and have requires_grad=True
@@ -145,10 +146,10 @@ class FiniteIBP(nn.Module):
 class InfiniteIBP(nn.Module):
     """
     Infinite/Non-Truncated Indian Buffet Process
-    with a mean-field variational posterior approximation. 
+    with a mean-field variational posterior approximation.
     Section 5 in http://mlg.eng.cam.ac.uk/pub/pdf/DosMilVanTeh09b.pdf
 
-    Generative Model:    
+    Generative Model:
     v_k ~ Beta(alpha,1)               for k in {1,...,inf}
     pi_k = product_{i=1}^k v_i        for k in {1,...,inf}
     z_nk ~ Bernoulli(pi_k)            for k in {1,...,inf}, n in {1,...,N}
@@ -158,7 +159,7 @@ class InfiniteIBP(nn.Module):
     q(v_k) = Beta(v_k;tau_k1,tau_k2 (now over v rather than pi)
     q(A_k) = Normal(A_k;phi_k,phi_var_k)
     q(z_nk) = Bernoulli(z_nk; nu_nk)
-    
+
     In truncated stick breaking for the infinite model,
     pi_k = product_{i=1}^k v_i for k <= K and zero otherwise.
 
@@ -206,31 +207,36 @@ class InfiniteIBP(nn.Module):
         return self.alpha.log() + (self.alpha - 1) * \
             (digamma(tau[:, 0]) - digamma(tau.sum(dim=1)))
 
-
     # TODO WORK IN PROGRESS: FINISH / ReWRITE / CHECK / DEBUG THIS FUNCTION
-    def _E_log_stick(self,tau):
+    def _E_log_stick(self, tau):
+        """
+        @param tau: (K, 2)
+        @return: (K,)
+        """
+        q = torch.digamma()
 
-        # TODO rewrite this in a smarter way
-        q = torch.zeros(self.K,self.K)
-        for k in range(self.K):
-            for i in range(self.K):
-                q[k][i] += digammma(tau[i,1])
-                for m in range(i-1):
-                    q[k][i] += digamma(tau[m,0])
-                for m in range(i):
-                    q[k][i] -= digammma(tau[m,0] + tau[m,1])
+        # we use the same indexing as in eq. (10)
+        q = torch.zeros(self.K, self.K)
 
-        q = torch.nn.functional.normalize(q,p=1,dim=1)
-        first = (q * digamma(tau[,1])).sum(1)
-        second = torch.zeros(self.K) # TODO
-        third = torch.zeros(self.K) # TODO
-        temp_q = q.clone()
-        temp_q[q==0] += 1.
+        # working in log space until the last step
+        first_term = digamma(tau[:, 1])
+        second_term = digamma(tau[:, 0]).cumsum() - digamma(tau[:, 0])
+        third_term = digamma(tau.sum(1)).cumsum()
+        q += (first_term + second_term + third_term).view(1, -1)
+        q = torch.tril(q).exp()
+        q = torch.nn.functional.normalize(q, p=1, dim=1)
+
+        # TODO: should we detach q? what does that do to the ADVI?
+
+        # each vector should be size (K,)
+        first = (q * digamma(tau[:, 1]).view(1, -1)).sum(1)
+        second = ((1 - q.cumsum(1)) * tau[:, 1]).sum(1)
+        third = ((1 - q.cumsum(1) - q) * tau.sum(1)).sum(1)
+        temp_q = q.clone() # TODO: why clone?
+        temp_q[q == 0] = 1. # since half of q is 0, log(1) is now a mask
         fourth = (temp_q * temp_q.log()).sum(1)
-        E_log_stick = first + second + third + fourth
-        return E_log_stick
-    
-    # TODO WORK IN PROGRESS: FINISH / ReWRITE / CHECK / DEBUG THIS FUNCTION
+        return first + second + third + fourth
+
     def _2_feature_assign(self, nu, tau):
         """
         @param nu: (N, K)
@@ -239,7 +245,7 @@ class InfiniteIBP(nn.Module):
 
         Computes Cross Entropy: E_q(v),q(Z) [logp(z_nk|v)]
         """
-        return nu * (digammma(tau[:,1]) - digamma(tau.sum(dim=1))) + \
+        return nu * (digammma(tau[:,1]) - digamma(tau.sum(dim=1))).cumsum() + \
             (1. - nu) * self._E_log_stick(tau)
 
     def _3_feature_prob(self, phi_var, phi):
@@ -304,23 +310,18 @@ class InfiniteIBP(nn.Module):
         entropy_q_v = (tau.lgamma().sum(1) - tau.sum(1).lgamma() - \
             (tau[:, 0] - 1) * digamma(tau[:, 0]) - \
             (tau[:, 1] - 1) * digamma(tau[:, 1]) + \
-            (tau.sum(1) - 2.) * digamma(tau.sum(1))).sum() 
+            (tau.sum(1) - 2.) * digamma(tau.sum(1))).sum()
         entropy_q_A = 0
         for k in self.K:
             entropy_q_A += 0.5 * (self.D * (1 + LOG_2PI) + torch.logdet(phi_var[k])).sum()
         entropy_q_z = -(nu * nu.log() + (1 - nu) * (1 - nu).log()).sum()
         return entropy_q_v + entropy_q_A + entropy_q_z
 
+    def cavi(self, X):
+        pass
 
-
-
-
-"""
-We'll move this code soon - let's get some experiments up to understand what's going on
-"""
-
-def main():
-
+def fit_infinite_to_ggblocks():
+    pass
 
 if __name__ == '__main__':
     """
