@@ -334,6 +334,8 @@ class InfiniteIBP(nn.Module):
                                                            self.phi[k].view((1, D))))).sum(0) / (self.sigma_n ** 2)
         # update q(z)
         # we shouldn't vectorize this I think (TODO: discuss)
+        # Marks comment: update for nu_nk depends on nu_nl forall l != k
+        # so perhaps it can be parallelized across n, but not k
         for k in range(K):
             for n in range(N):
                 first_term = (digamma(tau[:k+1, 1]) - digamma(tau.sum(1)[:k+1])).sum() - \
