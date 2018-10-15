@@ -352,6 +352,85 @@ class InfiniteIBP(nn.Module):
                 ((N - self.nu.sum(0)) * q[:, k+1:].sum(1))[k+1:].sum()
             self.tau[k][1] = 1 + ((N - self.nu.sum(0)) * q[:, k])[k:].sum()
 
+
+    def _gibbs_update_Z_old(X,Z,A):
+        '''
+        m_-nk = number of observations not including 
+                z_nk containing feature k
+        
+        p(X|Z,A) = 1/([2*pi*sigma_n^2]^(ND/2)) *
+                   exp([-1/(2*sigma_n^2)] tr((X-ZA)^T(X-ZA)))
+
+        p(z_nk=1|Z_-nk,A,X) propto (m_-nk)(1/(N-1))p(X|Z,A)
+        '''
+        pass
+    def _gibbs_update_A_old(X,Z_old):
+        '''
+        mu = (Z^T Z + (sigma_n^2 / sigma_A^2) I )^{-1} Z^T  X
+        Cov = sigma_n^2 (Z^T Z + (sigma_n^2/sigma_A^2) I)^{-1}
+        p(A|X,Z) = N(mu,cov)
+        '''
+        pass
+    def _gibbs_k_new(Z_old,A_old):
+        '''
+        p(k_new) = Poisson(self.alpha/N)
+        p(X|Z_old,A_old,k_new) propto ...
+        p(k_new|X,Z_old,A_old) propto p(X|Z_old,A_old,k_new)p(k_new)
+        '''
+        pass
+    def _gibbs_Z_new(Z_old,k_new):
+        pass
+    def _gibbs_A_new(k_new,Z_new,Z_old,A_old):
+        pass
+
+    # TODO Work in Progress
+    def gibbs(self,X):
+        '''
+        Notation:
+        Z_old is set by updating Z_nk for existing k
+        A_old is set by updating A_k for existing k
+        k_new is the number of new features to draw
+        Z_new corresponds to k_new new features (columns)
+        A_new corresponds to k_new new features
+        '''
+        N = X.size()
+        Z = torch.zeros(N, self.K)
+        MVN = torch.distributions.MultivariateNormal
+        A_mean = torch.zeros(self.D)
+        A_cov = self.sigma_a.pow(2)*torch.eye(self.D)
+        p_A = MVN(A_mean, A_cov)
+        
+        A = torch.zeros(self.K,self.D)
+        for k in range(self.K):
+            A[k] = p_A.sample()
+
+        iters = 100
+        for iteration in range(iters):
+            Z_old = _gibbs_update_Z_old(X,Z,A)
+            A_old = _gibbs_update_A_old(X,Z_old)
+            k_new = _gibbs_k_new(Z_old,A_old)
+            Z_new = _gibbs_Z_new(Z_old,k_new)
+            A_new = _gibbs_A_new(k_new,Z_new,Z_old,A_old)
+            Z = concat(Z_old,Z_new)
+            A = concat(A_old,A_new)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 def fit_infinite_to_ggblocks_cavi():
     pass
 
