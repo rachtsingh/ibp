@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from torch import digamma
-
+import math
 LOG_2PI = 1.8378770664093453
 
 class FiniteIBP(nn.Module):
@@ -363,14 +363,47 @@ class InfiniteIBP(nn.Module):
 
         p(z_nk=1|Z_-nk,A,X) propto (m_-nk)(1/(N-1))p(X|Z,A)
         '''
-        pass
+        N = X.size()[0]
+        K = A.size()[0]
+        for i in range(N):
+            for k in range(K):
+                Z_k = Z[:,k]
+                m = Z_k.sum() - Z_k[i]
+                prior = (m/(N-1))
+
+                # If Z_nk were 1
+                Z_if_1 = Z.clone()
+                Z_if_1[i,k]=1
+                likelihood_if_1 = (1./(2*math.pi()*self.sigma_n^2).pow(N*D/2.) * \
+                    ((-1 /(2*self.sigma_n^2))*torch.trace((X - Z_if_1@A).transpose(0,1)@(X - Z_if_1@A))).exp()
+                score_if_1 = prior*likelihood_if_1
+                    
+                # If Z_nk were 0
+                Z_if_0 = Z.clone()
+                Z_if_0[i,k]=0
+                likelihood_if_0= (1./(2*math.pi()*self.sigma_n^2).pow(N*D/2.) * \
+                    ((-1 /(2*self.sigma_n^2))*torch.trace((X - Z_if_0@A).transpose(0,1)@(X - Z_if_0@A))).exp()
+                score_if_0 = prior*likelihood_if_0
+                
+                denominator = score_if_0 + score_if_1
+                P = Bernoulli(torch.tensor([score_if_1 / denominator]))
+                Z[i,k] = p.sample()
+        return Z
+        
     def _gibbs_update_A_old(X,Z_old):
         '''
         mu = (Z^T Z + (sigma_n^2 / sigma_A^2) I )^{-1} Z^T  X
         Cov = sigma_n^2 (Z^T Z + (sigma_n^2/sigma_A^2) I)^{-1}
         p(A|X,Z) = N(mu,cov)
         '''
-        pass
+        N = X.size()[0]
+        K = Z_old.size()[0]
+        mu = (Z_old.transpose(0,1)@Z_old + (self.sigma_n.pow(2)/self.sigma_a.pow(2))*torch.eye(K)).inverse()@Z_old@X
+        cov = self.sigma_n.pow(2)*(Z_old.transpose(0,1)@Z + (self.sigma_n.pow(2)/sigma_n.pow(2))*torch.eye(K)).inverse()
+        MVN = torch.distributions.MultivariateNormal
+        p_A = MVN(mu,cov)
+        return p_A.sample()
+
     def _gibbs_k_new(Z_old,A_old):
         '''
         p(k_new) = Poisson(self.alpha/N)
