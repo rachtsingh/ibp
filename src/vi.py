@@ -374,20 +374,20 @@ class InfiniteIBP(nn.Module):
                 # If Z_nk were 1
                 Z_if_1 = Z.clone()
                 Z_if_1[i,k]=1
-                likelihood_if_1 = (1./(2*math.pi()*self.sigma_n^2).pow(N*D/2.) * \
-                    ((-1 /(2*self.sigma_n^2))*torch.trace((X - Z_if_1@A).transpose(0,1)@(X - Z_if_1@A))).exp()
+                likelihood_if_1 = (1./(2*math.pi()*self.sigma_n.pow(2)).pow(N*D/2.) * \
+                    ((-1 /(2*self.sigma_n.pow(2)))*torch.trace((X - Z_if_1@A).transpose(0,1)@(X - Z_if_1@A))).exp()
                 score_if_1 = prior*likelihood_if_1
                     
                 # If Z_nk were 0
                 Z_if_0 = Z.clone()
                 Z_if_0[i,k]=0
-                likelihood_if_0= (1./(2*math.pi()*self.sigma_n^2).pow(N*D/2.) * \
-                    ((-1 /(2*self.sigma_n^2))*torch.trace((X - Z_if_0@A).transpose(0,1)@(X - Z_if_0@A))).exp()
+                likelihood_if_0= (1./(2*math.pi()*self.sigma_n.pow(2)).pow(N*D/2.) * \
+                    ((-1 /(2*self.sigma_n.pow(2)))*torch.trace((X - Z_if_0@A).transpose(0,1)@(X - Z_if_0@A))).exp()
                 score_if_0 = prior*likelihood_if_0
                 
                 denominator = score_if_0 + score_if_1
-                P = Bernoulli(torch.tensor([score_if_1 / denominator]))
-                Z[i,k] = p.sample()
+                p_znk = Bernoulli(torch.tensor([score_if_1 / denominator]))
+                Z[i,k] = p_znk.sample()
         return Z
         
     def _gibbs_update_A_old(X,Z_old):
