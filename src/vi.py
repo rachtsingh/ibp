@@ -354,7 +354,12 @@ class InfiniteIBP(nn.Module):
 
 
 
-    def _gibbs_update_Z_old(X,Z,A):
+
+    '''
+    Below is a fully Un-collapsed Gibbs Sampler for the Infinite IBP Model
+    '''
+    # TODO: Debug
+    def _gibbs_resample_Z(X,Z,A):
         '''
         m_-nk = number of observations not including 
                 z_nk containing feature k
@@ -392,8 +397,9 @@ class InfiniteIBP(nn.Module):
                 p_znk = Bernoulli(torch.tensor([score_if_1 / denominator]))
                 Z[i,k] = p_znk.sample()
         return Z
-        
-    def _gibbs_update_A_old(X,Z_old):
+    
+    # TODO: Debug
+    def _gibbs_resample_A(X,Z):
         '''
         mu = (Z^T Z + (sigma_n^2 / sigma_A^2) I )^{-1} Z^T  X
         Cov = sigma_n^2 (Z^T Z + (sigma_n^2/sigma_A^2) I)^{-1}
@@ -401,14 +407,14 @@ class InfiniteIBP(nn.Module):
         '''
         N = X.size()[0]
         D = X.size()[1]
-        K = Z_old.size()[0]
+        K = Z.size()[0]
 
-        ZTZ = Z_old.transpose(0,1)@Z_old
+        ZTZ = Z.transpose(0,1)@Z
         I = torch.eye(K)
         sig_n = self.sigma_n
         sig_a = self.sigma_a
         
-        mu = (ZTZ + (sig_n/sig_a).pow(2)*I).inverse()@Z_old@X
+        mu = (ZTZ + (sig_n/sig_a).pow(2)*I).inverse()@Z@X
         cov = self.sigma_n.pow(2)*(ZTZ + (sig_n/sig_a).pow(2)*I).inverse()
         MVN = torch.distributions.MultivariateNormal
         A = torch.zeros(K,D)
@@ -419,51 +425,66 @@ class InfiniteIBP(nn.Module):
 
         return A
 
-    def _gibbs_k_new(Z_old,A_old):
+    # TODO: Implement
+    def _gibbs_k_new(Z,A):
         '''
         p(k_new) = Poisson(self.alpha/N)
-        p(X|Z_old,A_old,k_new) propto ...
-        p(k_new|X,Z_old,A_old) propto p(X|Z_old,A_old,k_new)p(k_new)
+        p(X|Z,A,k) propto ...
+        p(k_new|X,Z,A) propto p(X|Z,A,k_new)p(k_new)
         '''
+        N = Z_old.size()[0]
+        p_k_new = torch.distributions.Poisson(torch.tensor([self.alpha/N]))
         pass
-    def _gibbs_Z_new(Z_old,k_new):
-        pass
-    def _gibbs_A_new(k_new,Z_new,Z_old,A_old):
+    
+    # TODO: Implement
+    def _gibbs_Z_new(Z,k_new):
         pass
 
-    # TODO Work in Progress
+    # TODO: Debug
+    def _gibbs_A_new(X,k_new,Z,A):
+        N = X.size()[0]
+        D = X.size()[1]
+        K = Z.new.size()[1]
+        ones = torch.ones(k_new,k_new)
+        I = torch.eye(k_new)
+        sig_n = self.sigma_n
+        sig_a = self.sigma_a
+        Z_new = Z[:,-k_new:]
+        Z_old = Z[:,:-k_new]
+
+        mu = (ones + (sig_n/sig_a).pow(2)*I).inverse() @ \
+            Z_new.transpose(0,1) @ (X - Z_old@A)
+        
+        cov = sig_n.pow(2) * (ones + (sig_n/sig_a).pow(2)*I).inverse()
+        MVN = torch.dsitributions.MultivariateNormal
+        A_new = torch.zeros(K,D)
+        for d in range(D):
+            p_A = MVN(mu[:,d],cov)
+            A_new[:,d] = p_A.sample()        
+        return A_new
+
+    # TODO: Debug
     def gibbs(self,X):
-        '''
-        Notation:
-        Z_old is set by updating Z_nk for existing k
-        A_old is set by updating A_k for existing k
-        k_new is the number of new features to draw
-        Z_new corresponds to k_new new features (columns)
-        A_new corresponds to k_new new features
-        '''
-        N = X.size()
+        
+        N = X.size()[0]
+        D = X.size()[1]
         Z = torch.zeros(N, self.K)
         MVN = torch.distributions.MultivariateNormal
-        A_mean = torch.zeros(self.D)
-        A_cov = self.sigma_a.pow(2)*torch.eye(self.D)
-        p_A = MVN(A_mean, A_cov)
+        Ak_mean = torch.zeros(D)
+        Ak_cov = self.sigma_a.pow(2)*torch.eye(D)
+        p_Ak = MVN(Ak_mean, Ak_cov)
         
-        A = torch.zeros(self.K,self.D)
+        A = torch.zeros(self.K,D)
         for k in range(self.K):
-            A[k] = p_A.sample()
+            A[k] = p_Ak.sample()
 
         iters = 100
         for iteration in range(iters):
-            Z_old = _gibbs_update_Z_old(X,Z,A)
-            A_old = _gibbs_update_A_old(X,Z_old)
-            k_new = _gibbs_k_new(Z_old,A_old)
-            Z_new = _gibbs_Z_new(Z_old,k_new)
-            A_new = _gibbs_A_new(k_new,Z_new,Z_old,A_old)
-            Z = concat(Z_old,Z_new)
-            A = concat(A_old,A_new)
-
-
-
+            Z = _gibbs_resample_Z(X,Z,A)
+            A = _gibbs_resample_A(X,Z)
+            k_new = _gibbs_k_new(Z,A)
+            Z = _gibbs_Z_new(Z,k_new)
+            A = _gibbs_A_new(X,k_new,Z,A)
 
 
 
