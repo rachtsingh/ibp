@@ -371,6 +371,8 @@ class InfiniteIBP(nn.Module):
         '''
         N = X.size()[0]
         K = A.size()[0]
+        Bernoulli = torch.distributions.Bernoulli
+
         for i in range(N):
             for k in range(K):
                 Z_k = Z[:,k]
@@ -393,6 +395,7 @@ class InfiniteIBP(nn.Module):
                         torch.trace((X - Z_if_0@A).transpose(0,1)@(X - Z_if_0@A))).exp()
                 score_if_0 = prior*likelihood_if_0
                 
+                # Normalize and Sample
                 denominator = score_if_0 + score_if_1
                 p_znk = Bernoulli(torch.tensor([score_if_1 / denominator]))
                 Z[i,k] = p_znk.sample()
