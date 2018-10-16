@@ -353,6 +353,7 @@ class InfiniteIBP(nn.Module):
             self.tau[k][1] = 1 + ((N - self.nu.sum(0)) * q[:, k])[k:].sum()
 
 
+
     def _gibbs_update_Z_old(X,Z,A):
         '''
         m_-nk = number of observations not including 
@@ -375,14 +376,16 @@ class InfiniteIBP(nn.Module):
                 Z_if_1 = Z.clone()
                 Z_if_1[i,k]=1
                 likelihood_if_1 = (1./(2*math.pi()*self.sigma_n.pow(2)).pow(N*D/2.) * \
-                    ((-1 /(2*self.sigma_n.pow(2)))*torch.trace((X - Z_if_1@A).transpose(0,1)@(X - Z_if_1@A))).exp()
+                    ((-1 /(2*self.sigma_n.pow(2))) * \
+                        torch.trace((X - Z_if_1@A).transpose(0,1)@(X - Z_if_1@A))).exp()
                 score_if_1 = prior*likelihood_if_1
                     
                 # If Z_nk were 0
                 Z_if_0 = Z.clone()
                 Z_if_0[i,k]=0
                 likelihood_if_0= (1./(2*math.pi()*self.sigma_n.pow(2)).pow(N*D/2.) * \
-                    ((-1 /(2*self.sigma_n.pow(2)))*torch.trace((X - Z_if_0@A).transpose(0,1)@(X - Z_if_0@A))).exp()
+                    ((-1 /(2*self.sigma_n.pow(2))) * \
+                        torch.trace((X - Z_if_0@A).transpose(0,1)@(X - Z_if_0@A))).exp()
                 score_if_0 = prior*likelihood_if_0
                 
                 denominator = score_if_0 + score_if_1
@@ -397,12 +400,24 @@ class InfiniteIBP(nn.Module):
         p(A|X,Z) = N(mu,cov)
         '''
         N = X.size()[0]
+        D = X.size()[1]
         K = Z_old.size()[0]
-        mu = (Z_old.transpose(0,1)@Z_old + (self.sigma_n.pow(2)/self.sigma_a.pow(2))*torch.eye(K)).inverse()@Z_old@X
-        cov = self.sigma_n.pow(2)*(Z_old.transpose(0,1)@Z + (self.sigma_n.pow(2)/sigma_n.pow(2))*torch.eye(K)).inverse()
+
+        ZTZ = Z_old.transpose(0,1)@Z_old
+        I = torch.eye(K)
+        sig_n = self.sigma_n
+        sig_a = self.sigma_a
+        
+        mu = (ZTZ + (sig_n/sig_a).pow(2)*I).inverse()@Z_old@X
+        cov = self.sigma_n.pow(2)*(ZTZ + (sig_n/sig_a).pow(2)*I).inverse()
         MVN = torch.distributions.MultivariateNormal
-        p_A = MVN(mu,cov)
-        return p_A.sample()
+        A = torch.zeros(K,D)
+        
+        for d in range(D):
+            p_A = MVN(mu[:,d],cov)
+            A[:,d] = p_A.sample()        
+
+        return A
 
     def _gibbs_k_new(Z_old,A_old):
         '''
