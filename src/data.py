@@ -34,7 +34,7 @@ def generate_gg_blocks(N):
     A = gg_blocks()
     return Z @ A
 
-def generate_gg_blocks_dataset(N):
+def generate_gg_blocks_dataset(N, sigma_n):
     """
     Generate a dataset based on the ggblocks features (with noise)
 
