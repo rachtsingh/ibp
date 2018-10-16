@@ -4,7 +4,9 @@ from torch import digamma
 
 from utils import register_hooks
 
+import math
 LOG_2PI = 1.8378770664093453
+
 EPS = 1e-16
 
 # class FiniteIBP(nn.Module):
@@ -357,6 +359,8 @@ class InfiniteIBP(nn.Module):
                                                            self.phi[k].view((1, D))))).sum(0) / (self.sigma_n ** 2)
         # update q(z)
         # we shouldn't vectorize this I think (TODO: discuss)
+        # Marks comment: update for nu_nk depends on nu_nl forall l != k
+        # so perhaps it can be parallelized across n, but not k
         for k in range(K):
             for n in range(N):
                 first_term = (digamma(tau[:k+1, 1]) - digamma(tau.sum(1)[:k+1])).sum() - \
@@ -372,6 +376,140 @@ class InfiniteIBP(nn.Module):
             self.tau[k][0] = self.alpha + self.nu[:, k:].sum() + \
                 ((N - self.nu.sum(0)) * q[:, k+1:].sum(1))[k+1:].sum()
             self.tau[k][1] = 1 + ((N - self.nu.sum(0)) * q[:, k])[k:].sum()
+
+    '''
+    Below is a fully Un-collapsed Gibbs Sampler for the Infinite IBP Model
+    '''
+    # TODO: Debug
+    def _gibbs_resample_Z(X,Z,A):
+        '''
+        m_-nk = number of observations not including
+                z_nk containing feature k
+
+        p(X|Z,A) = 1/([2*pi*sigma_n^2]^(ND/2)) *
+                   exp([-1/(2*sigma_n^2)] tr((X-ZA)^T(X-ZA)))
+
+        p(z_nk=1|Z_-nk,A,X) propto (m_-nk)(1/(N-1))p(X|Z,A)
+        '''
+        N = X.size()[0]
+        K = A.size()[0]
+        Bernoulli = torch.distributions.Bernoulli
+
+        for i in range(N):
+            for k in range(K):
+                Z_k = Z[:,k]
+                m = Z_k.sum() - Z_k[i]
+                prior = (m/(N-1))
+
+                # If Z_nk were 1
+                Z_if_1 = Z.clone()
+                Z_if_1[i,k]=1
+                likelihood_if_1 = (1./(2*math.pi()*self.sigma_n.pow(2)).pow(N*D/2.) * \
+                    ((-1 /(2*self.sigma_n.pow(2))) * \
+                        torch.trace((X - Z_if_1@A).transpose(0,1)@(X - Z_if_1@A))).exp()
+                score_if_1 = prior*likelihood_if_1
+
+                # If Z_nk were 0
+                Z_if_0 = Z.clone()
+                Z_if_0[i,k]=0
+                likelihood_if_0= (1./(2*math.pi()*self.sigma_n.pow(2)).pow(N*D/2.) * \
+                    ((-1 /(2*self.sigma_n.pow(2))) * \
+                        torch.trace((X - Z_if_0@A).transpose(0,1)@(X - Z_if_0@A))).exp()
+                score_if_0 = prior*likelihood_if_0
+
+                # Normalize and Sample
+                denominator = score_if_0 + score_if_1
+                p_znk = Bernoulli(torch.tensor([score_if_1 / denominator]))
+                Z[i,k] = p_znk.sample()
+        return Z
+
+    # TODO: Debug
+    def _gibbs_resample_A(X,Z):
+        '''
+        mu = (Z^T Z + (sigma_n^2 / sigma_A^2) I )^{-1} Z^T  X
+        Cov = sigma_n^2 (Z^T Z + (sigma_n^2/sigma_A^2) I)^{-1}
+        p(A|X,Z) = N(mu,cov)
+        '''
+        N = X.size()[0]
+        D = X.size()[1]
+        K = Z.size()[0]
+
+        ZTZ = Z.transpose(0,1)@Z
+        I = torch.eye(K)
+        sig_n = self.sigma_n
+        sig_a = self.sigma_a
+
+        mu = (ZTZ + (sig_n/sig_a).pow(2)*I).inverse()@Z@X
+        cov = self.sigma_n.pow(2)*(ZTZ + (sig_n/sig_a).pow(2)*I).inverse()
+        MVN = torch.distributions.MultivariateNormal
+        A = torch.zeros(K,D)
+
+        for d in range(D):
+            p_A = MVN(mu[:,d],cov)
+            A[:,d] = p_A.sample()
+
+        return A
+
+    # TODO: Implement
+    def _gibbs_k_new(Z,A):
+        '''
+        p(k_new) = Poisson(self.alpha/N)
+        p(X|Z,A,k) propto ...
+        p(k_new|X,Z,A) propto p(X|Z,A,k_new)p(k_new)
+        '''
+        N = Z_old.size()[0]
+        p_k_new = torch.distributions.Poisson(torch.tensor([self.alpha/N]))
+        pass
+
+    # TODO: Implement
+    def _gibbs_Z_new(Z,k_new):
+        pass
+
+    # TODO: Debug
+    def _gibbs_A_new(X,k_new,Z,A):
+        N = X.size()[0]
+        D = X.size()[1]
+        K = Z.new.size()[1]
+        ones = torch.ones(k_new,k_new)
+        I = torch.eye(k_new)
+        sig_n = self.sigma_n
+        sig_a = self.sigma_a
+        Z_new = Z[:,-k_new:]
+        Z_old = Z[:,:-k_new]
+
+        mu = (ones + (sig_n/sig_a).pow(2)*I).inverse() @ \
+            Z_new.transpose(0,1) @ (X - Z_old@A)
+
+        cov = sig_n.pow(2) * (ones + (sig_n/sig_a).pow(2)*I).inverse()
+        MVN = torch.dsitributions.MultivariateNormal
+        A_new = torch.zeros(K,D)
+        for d in range(D):
+            p_A = MVN(mu[:,d],cov)
+            A_new[:,d] = p_A.sample()
+        return A_new
+
+    # TODO: Debug
+    def gibbs(self,X):
+
+        N = X.size()[0]
+        D = X.size()[1]
+        Z = torch.zeros(N, self.K)
+        MVN = torch.distributions.MultivariateNormal
+        Ak_mean = torch.zeros(D)
+        Ak_cov = self.sigma_a.pow(2)*torch.eye(D)
+        p_Ak = MVN(Ak_mean, Ak_cov)
+
+        A = torch.zeros(self.K,D)
+        for k in range(self.K):
+            A[k] = p_Ak.sample()
+
+        iters = 100
+        for iteration in range(iters):
+            Z = _gibbs_resample_Z(X,Z,A)
+            A = _gibbs_resample_A(X,Z)
+            k_new = _gibbs_k_new(Z,A)
+            Z = _gibbs_Z_new(Z,k_new)
+            A = _gibbs_A_new(X,k_new,Z,A)
 
 def fit_infinite_to_ggblocks_cavi():
     pass
