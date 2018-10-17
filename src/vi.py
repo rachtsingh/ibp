@@ -377,50 +377,80 @@ class InfiniteIBP(nn.Module):
                 ((N - self.nu.sum(0)) * q[:, k+1:].sum(1))[k+1:].sum()
             self.tau[k][1] = 1 + ((N - self.nu.sum(0)) * q[:, k])[k:].sum()
 
+
+
+
+
+
     '''
     Below is a fully Un-collapsed Gibbs Sampler for the Infinite IBP Model
     '''
-    # TODO: Debug
-    def _gibbs_resample_Z(X,Z,A):
-        '''
-        m_-nk = number of observations not including
-                z_nk containing feature k
 
+
+
+
+    def _gibbs_likelihood_given_ZA(X,Z,A):
+        '''
         p(X|Z,A) = 1/([2*pi*sigma_n^2]^(ND/2)) *
-                   exp([-1/(2*sigma_n^2)] tr((X-ZA)^T(X-ZA)))
+               exp([-1/(2*sigma_n^2)] tr((X-ZA)^T(X-ZA)))
+    
+        Used in Zik resample
+        '''
+        N = X.size()[0]
+        D = X.size()[1]
+        pi = math.pi()
+        sig_n2 = self.sigma_n.pow(2)
+        first_term = (1./(2*pi*sig_n2)).pow(N*D/2.) 
+        second_term = ((-1./(2*sig_n2)) * \
+            torch.trace((X-Z@A).transpose(0,1)@(X-Z@A))).exp()
+        return first_term * second_term
+
+    def _gibbs_resample_Zik(X,Z,A,i,k):
+        '''
+        m = number of observations not including
+            Z_ik containing feature k
 
         p(z_nk=1|Z_-nk,A,X) propto (m_-nk)(1/(N-1))p(X|Z,A)
         '''
+        Bernoulli = torch.distributions.Bernoulli
+        # Prior on Z[i][k]
+        Z_k = Z[:,k]
+        m = Z_k.sum() - Z_k[i]
+                      
+        # If Z_nk were 0
+        Z_if_0 = Z.clone()
+        Z_if_0[i,k] = 0
+        prior_if_0 = (1-prior_if_1)
+        likelihood_if_0 = _gibbs_likelihood_given_ZA(X,Z_if_0,A)
+        score_if_0 = prior_if_0*likelihood_if_0
+        
+        # If Z_nk were 1
+        Z_if_1 = Z.clone()
+        Z_if_1[i,k]=1
+        prior_if_1 = (m/(N-1))
+        likelihood_if_1 = _gibbs_likelihood_given_ZA(X,Z_if_1,A)
+        score_if_1 = prior_if_1*likelihood_if_1
+
+        # Normalize and Sample new Z[i][k]
+        denominator = score_if_0 + score_if_1
+        p_znk = Bernoulli(torch.tensor([score_if_1 / denominator]))
+        return p_znk.sample()
+
+    def _gibbs_resample_Z(X,Z,A):
         N = X.size()[0]
         K = A.size()[0]
-        Bernoulli = torch.distributions.Bernoulli
-
         for i in range(N):
             for k in range(K):
-                Z_k = Z[:,k]
-                m = Z_k.sum() - Z_k[i]
-                prior = (m/(N-1))
+                Z[i,k] = _gibbs_resample_Zik(X,Z,A,i,k)
 
-                # If Z_nk were 1
-                Z_if_1 = Z.clone()
-                Z_if_1[i,k]=1
-                likelihood_if_1 = (1./(2*math.pi()*self.sigma_n.pow(2)).pow(N*D/2.) * \
-                    ((-1 /(2*self.sigma_n.pow(2))) * \
-                        torch.trace((X - Z_if_1@A).transpose(0,1)@(X - Z_if_1@A))).exp()
-                score_if_1 = prior*likelihood_if_1
 
-                # If Z_nk were 0
-                Z_if_0 = Z.clone()
-                Z_if_0[i,k]=0
-                likelihood_if_0= (1./(2*math.pi()*self.sigma_n.pow(2)).pow(N*D/2.) * \
-                    ((-1 /(2*self.sigma_n.pow(2))) * \
-                        torch.trace((X - Z_if_0@A).transpose(0,1)@(X - Z_if_0@A))).exp()
-                score_if_0 = prior*likelihood_if_0
-
-                # Normalize and Sample
-                denominator = score_if_0 + score_if_1
-                p_znk = Bernoulli(torch.tensor([score_if_1 / denominator]))
-                Z[i,k] = p_znk.sample()
+            k_new  = ...
+            if k_new > 0:
+                Z = np.hstack((Z,toch.zeros(N,k_new)))
+                for k in range(k_new):
+                    Z[i][-(k+1)] = 1
+                Anew = _gibbs_A_new(X,k_new,Z,A)
+                
         return Z
 
     # TODO: Debug
@@ -433,7 +463,6 @@ class InfiniteIBP(nn.Module):
         N = X.size()[0]
         D = X.size()[1]
         K = Z.size()[0]
-
         ZTZ = Z.transpose(0,1)@Z
         I = torch.eye(K)
         sig_n = self.sigma_n
@@ -447,29 +476,15 @@ class InfiniteIBP(nn.Module):
         for d in range(D):
             p_A = MVN(mu[:,d],cov)
             A[:,d] = p_A.sample()
-
         return A
 
-    # TODO: Implement
-    def _gibbs_k_new(Z,A):
-        '''
-        p(k_new) = Poisson(self.alpha/N)
-        p(X|Z,A,k) propto ...
-        p(k_new|X,Z,A) propto p(X|Z,A,k_new)p(k_new)
-        '''
-        N = Z_old.size()[0]
-        p_k_new = torch.distributions.Poisson(torch.tensor([self.alpha/N]))
-        pass
-
-    # TODO: Implement
-    def _gibbs_Z_new(Z,k_new):
-        pass
 
     # TODO: Debug
     def _gibbs_A_new(X,k_new,Z,A):
         N = X.size()[0]
         D = X.size()[1]
-        K = Z.new.size()[1]
+        K = Z.size()[1]
+        assert K == A.size()[0]+k_new
         ones = torch.ones(k_new,k_new)
         I = torch.eye(k_new)
         sig_n = self.sigma_n
