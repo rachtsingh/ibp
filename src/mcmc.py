@@ -1,3 +1,11 @@
+import torch
+from torch import nn
+from torch import digamma
+from torch.distributions import MultivariateNormal as MVN
+from torch.distributions import Bernoulli as Bern
+from torch.distributions import Poisson as Pois
+from torch.distributions import Categorical as Categorical
+
 class UncollapsedGibbsIBP(nn.Module):
     ################################################
     ########### UNCOLLAPSED GIBBS SAMPLER ##########
@@ -15,7 +23,7 @@ class UncollapsedGibbsIBP(nn.Module):
         self.sigma_n = torch.tensor(sigma_n)
         self.D = torch.tensor(D)
 
-    def _gibbs_likelihood_given_ZA(X,Z,A):
+    def likelihood_given_ZA(X,Z,A):
         '''
         p(X|Z,A) = 1/([2*pi*sigma_n^2]^(ND/2)) *
                exp([-1/(2*sigma_n^2)] tr((X-ZA)^T(X-ZA)))
@@ -31,7 +39,7 @@ class UncollapsedGibbsIBP(nn.Module):
             torch.trace((X-Z@A).transpose(0,1)@(X-Z@A))).exp()
         return first_term * second_term
 
-    def _gibbs_resample_Zik(X,Z,A,i,k):
+    def resample_Zik(X,Z,A,i,k):
         '''
         m = number of observations not including
             Z_ik containing feature k
@@ -46,14 +54,14 @@ class UncollapsedGibbsIBP(nn.Module):
         Z_if_0 = Z.clone()
         Z_if_0[i,k] = 0
         prior_if_0 = 1 - (m/(N-1))
-        likelihood_if_0 = _gibbs_likelihood_given_ZA(X,Z_if_0,A)
+        likelihood_if_0 = likelihood_given_ZA(X,Z_if_0,A)
         score_if_0 = prior_if_0*likelihood_if_0
 
         # If Z_nk were 1
         Z_if_1 = Z.clone()
         Z_if_1[i,k]=1
         prior_if_1 = (m/(N-1))
-        likelihood_if_1 = _gibbs_likelihood_given_ZA(X,Z_if_1,A)
+        likelihood_if_1 = likelihood_given_ZA(X,Z_if_1,A)
         score_if_1 = prior_if_1*likelihood_if_1
 
         # Normalize and Sample new Z[i][k]
@@ -62,12 +70,12 @@ class UncollapsedGibbsIBP(nn.Module):
         return p_znk.sample()
 
 
-    def _gibbs_renormalize_log_probs(log_probs):
+    def renormalize_log_probs(log_probs):
         log_probs = log_probs - log_probs.max()
         likelihoods = log_probs.exp()
         return likelihoods / likelihoods.sum()
 
-    def _gibbs_k_new(X,Z,A,i,truncation):
+    def k_new(X,Z,A,i,truncation):
         log_probs = toch.zeros(truncation)
         poisson_probs = torch.zeros(truncation)
         N,K = Z.size()
@@ -102,33 +110,32 @@ class UncollapsedGibbsIBP(nn.Module):
             poisson_probs[j] = p_k_new.log_prob(j).exp()
             Z = torch.cat((Z,torch.zeros(N).transpose(0,1)),0)
             Z[i][-1]=1
-        probs = _gibbs_renormalize_log_probs(log_probs)
+        probs = renormalize_log_probs(log_probs)
         poisson_probs = poisson_probs / poisson_probs.sum()
         sample_probs = torch.multiply(probs,poisson_probs)
         sample_probs = sample_probs / sample_probs.sum()
         Z = Z[:,:-truncation]
         assert Z.size()[1] == K
-        Categorical = torch.distributions.Categorical
         posterior_k_new = Categorical(sample_probs)
         return posterior_k_new.sample()
 
-    def _gibbs_resample_Z(X,Z,A):
+    def resample_Z(X,Z,A):
         N = X.size()[0]
         K = A.size()[0]
         for i in range(N):
             for k in range(K):
-                Z[i,k] = _gibbs_resample_Zik(X,Z,A,i,k)
+                Z[i,k] = resample_Zik(X,Z,A,i,k)
             truncation=100
-            k_new = _gibbs_k_new(X,Z,A,i,truncation)
+            k_new = k_new(X,Z,A,i,truncation)
             if k_new > 0:
                 Z = torch.cat((Z,torch.zeros(N,k_new)),0)
                 for j in range(k_new):
                     Z[i][-(j+1)] = 1
-                Anew = _gibbs_A_new(X,k_new,Z,A)
+                Anew = A_new(X,k_new,Z,A)
                 A = torch.cat((A,Anew),0)
         return Z,A
 
-    def _gibbs_resample_A(X,Z):
+    def resample_A(X,Z):
         '''
         mu = (Z^T Z + (sigma_n^2 / sigma_A^2) I )^{-1} Z^T  X
         Cov = sigma_n^2 (Z^T Z + (sigma_n^2/sigma_A^2) I)^{-1}
@@ -148,7 +155,7 @@ class UncollapsedGibbsIBP(nn.Module):
             A[:,d] = p_A.sample()
         return A
 
-    def _gibbs_A_new(X,k_new,Z,A):
+    def A_new(X,k_new,Z,A):
         N,D = X.size()
         K = Z.size()[1]
         assert K == A.size()[0]+k_new
@@ -170,7 +177,7 @@ class UncollapsedGibbsIBP(nn.Module):
             A_new[:,d] = p_A.sample()
         return A_new
 
-    def _gibbs_init_A(K,D):
+    def init_A(K,D):
         # Sample from prior p(A_k)
         Ak_mean = torch.zeros(D)
         Ak_cov = self.sigma_a.pow(2)*torch.eye(D)
@@ -180,15 +187,45 @@ class UncollapsedGibbsIBP(nn.Module):
             A[k] = p_Ak.sample()
         return A
 
+    def left_order_form(Z):
+        Z_numpy = Z.clone()
+        twos = np.ones(Z_numpy.shape[0])*2.0
+        twos[0] = 1.0
+        powers = np.cumprod(twos)[::-1]
+        values = np.dot(powers,Z_numpy)
+        idx = values.argsort()[::-1]
+        return torch.tensor(np.take(Z_numpy,idx,axis=1))
+        
+    def init_Z(N=20,alpha=2.0,K=1000):
+        Z = torch.zeros(N,K)
+        total_dishes_sampled = 0
+        for i in range(N):
+            selected = random(total_dishes_sampled) < Z[:,:total_dishes_sampled].sum() / (i+1.)
+            Z[i][:total_dishes_sampled][selected]=1.0
+            p_new_dishes = Pois(torch.tensor([self.alpha(i+1)]))
+            new_dishes = p_new_dishes.sample()
+            if total_dishes_sampled + new_dishes >= K:
+                new_dishes = K - total_dishes_sampled
+            Z[i][total_dishes_sampled:total_dishes_sampled+new_dishes]=1.0
+            total_dishes_sampled += new_dishes
+        return left_order_form(Z)
+
+    def trim_ZA(Z,A):
+        sums = Z.torch.sum(axis=0)
+        to_keep = torch.where(sums !=0)[0]
+        return Z[:,to_keep],A[to_keep,:]
+
     def gibbs(self, X, iters):
         N = X.size()[0]
         D = X.size()[1]
         K = self.K
-        Z = torch.zeros(N, self.K)
-        A = _gibbs_init_A(K,D) 
+        Z = torch.zeros(N, K)
+        Z = init_Z(N,self.alpha, K)
+        A = init_A(K,D) 
         for iteration in range(iters):
-            A = _gibbs_resample_A(X,Z)
-            Z,A = _gibbs_resample_Z(X,Z,A)
+            A = resample_A(X,Z)
+            Z,A = resample_Z(X,Z,A)
+            Z,A = trim_ZA(Z,A)
         # TODO we'll need to return the full chain in general,
         # but for now just return the last sample
         return A
