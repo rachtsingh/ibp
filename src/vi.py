@@ -436,6 +436,49 @@ class InfiniteIBP(nn.Module):
         p_znk = Bern(torch.tensor([score_if_1 / denominator]))
         return p_znk.sample()
 
+
+    def _gibbs_renormalize_log_probs(log_probs):
+        log_probs = log_probs - log_probs.max()
+        likelihoods = log_probs.exp()
+        return likelihoods / likelihoods.sum()
+
+    def _gibbs_k_new(X,Z,A,i,truncation):
+        log_probs = toch.zeros(truncation)
+        poisson_probs = torch.zeros(truncation)
+        N,K = Z.size()
+        D = X.size()[1]
+        X_minus_ZA = X - Z@A
+        X_minus_ZA_T = X_minus_ZA.transpose(0,1)
+        sig_n = self.sigma_n
+        sig_a = self.sigma_a
+        for j in range(truncation):
+            if j==0:
+                log_probs[j]=0.0
+            else:
+                w = torch.ones(j,j) + (sig_n/sig_a).pow(2)*torch.eye(j)
+                sign,ldet = np.linalg.slogdet(w)
+                first_term = j*D*(sig_n/sig_a).log() - ldet
+                second_term = 0.5*torch.trace( \
+                        X_minus_ZA_T @ \
+                        Z[:,-j:] @ \
+                        w.inverse() @ \
+                        Z[:.-j:] @ \
+                        X_minus_ZA) / \
+                        sig_n.pow(2)
+                log_probs[j] = first_term + second_term
+            p_k_new = Pois(torch.tensor([self.alpha/N]))
+            poisson_probs[j] = p_k_new.log_prob(j).exp()
+        
+            Z = np.hstack((Z,torch.zeros(N).transpose(0,1)))
+            Z[i][-1]=1
+        
+        probs = _gibbs_renormalize_log_probs(log_probs)
+        poisson_probs = poisson_probs / poisson_probs.sum()
+        sample_probs = torch.multiply(probs,poisson_probs)
+        sample_probs = sammple_probs / sample_probs.sum()
+        Z = Z[:,:-truncation]
+        return np.random.choice(truncation,p=sample_probs)
+
     # TODO Finish Implementation
     def _gibbs_resample_Z(X,Z,A):
         N = X.size()[0]
@@ -443,15 +486,14 @@ class InfiniteIBP(nn.Module):
         for i in range(N):
             for k in range(K):
                 Z[i,k] = _gibbs_resample_Zik(X,Z,A,i,k)
-
-
-            k_new  = ...
+            truncation=100
+            k_new = _gibbs_k_new(X,Z,A,i,truncation)           
             if k_new > 0:
                 Z = np.hstack((Z,toch.zeros(N,k_new)))
-                for k in range(k_new):
-                    Z[i][-(k+1)] = 1
+                for j in range(k_new):
+                    Z[i][-(j+1)] = 1
                 Anew = _gibbs_A_new(X,k_new,Z,A)
-                
+                A = np.concatenate((A,Anew))
         return Z
 
     def _gibbs_resample_A(X,Z):
@@ -476,8 +518,7 @@ class InfiniteIBP(nn.Module):
 
     # TODO: Debug
     def _gibbs_A_new(X,k_new,Z,A):
-        N = X.size()[0]
-        D = X.size()[1]
+        N,D = X.size()
         K = Z.size()[1]
         assert K == A.size()[0]+k_new
         ones = torch.ones(k_new,k_new)
