@@ -76,35 +76,42 @@ class UncollapsedGibbsIBP(nn.Module):
         X_minus_ZA_T = X_minus_ZA.transpose(0,1)
         sig_n = self.sigma_n
         sig_a = self.sigma_a
+        p_k_new = Pois(torch.tensor([self.alpha/N]))
         for j in range(truncation):
             if j==0:
                 log_probs[j]=0.0
             else:
                 w = torch.ones(j,j) + (sig_n/sig_a).pow(2)*torch.eye(j)
-                sign,ldet = np.linalg.slogdet(w)
-                first_term = j*D*(sig_n/sig_a).log() - ldet
-                second_term = 0.5*torch.trace( \
+                # alternative: torch.potrf(a).diag().prod()
+                w_numpy = w.numpy()
+                sign,log_det = np.linalg.slogdet(w_numpy)
+                log_det = torch.tensor([log_det])
+                
+                # Note this is in log space
+                first_term = j*D*(sig_n/sig_a).log() - ((D/2)*log_det)
+                 
+                second_term = 0.5*
+                        torch.trace( \
                         X_minus_ZA_T @ \
                         Z[:,-j:] @ \
                         w.inverse() @ \
-                        Z[:.-j:] @ \
+                        Z[:,-j:].transpose(0,1) @ \
                         X_minus_ZA) / \
                         sig_n.pow(2)
                 log_probs[j] = first_term + second_term
-            p_k_new = Pois(torch.tensor([self.alpha/N]))
             poisson_probs[j] = p_k_new.log_prob(j).exp()
-
-            Z = np.hstack((Z,torch.zeros(N).transpose(0,1)))
+            Z = torch.cat((Z,torch.zeros(N).transpose(0,1)),0)
             Z[i][-1]=1
-
         probs = _gibbs_renormalize_log_probs(log_probs)
         poisson_probs = poisson_probs / poisson_probs.sum()
         sample_probs = torch.multiply(probs,poisson_probs)
-        sample_probs = sammple_probs / sample_probs.sum()
+        sample_probs = sample_probs / sample_probs.sum()
         Z = Z[:,:-truncation]
-        return np.random.choice(truncation,p=sample_probs)
+        assert Z.size()[1] == K
+        Categorical = torch.distributions.Categorical
+        posterior_k_new = Categorical(sample_probs)
+        return posterior_k_new.sample()
 
-    # TODO Finish Implementation
     def _gibbs_resample_Z(X,Z,A):
         N = X.size()[0]
         K = A.size()[0]
@@ -114,12 +121,12 @@ class UncollapsedGibbsIBP(nn.Module):
             truncation=100
             k_new = _gibbs_k_new(X,Z,A,i,truncation)
             if k_new > 0:
-                Z = np.hstack((Z,toch.zeros(N,k_new)))
+                Z = torch.cat((Z,torch.zeros(N,k_new)),0)
                 for j in range(k_new):
                     Z[i][-(j+1)] = 1
                 Anew = _gibbs_A_new(X,k_new,Z,A)
-                A = np.concatenate((A,Anew))
-        return Z
+                A = torch.cat((A,Anew),0)
+        return Z,A
 
     def _gibbs_resample_A(X,Z):
         '''
@@ -141,7 +148,6 @@ class UncollapsedGibbsIBP(nn.Module):
             A[:,d] = p_A.sample()
         return A
 
-    # TODO: Debug
     def _gibbs_A_new(X,k_new,Z,A):
         N,D = X.size()
         K = Z.size()[1]
@@ -153,20 +159,19 @@ class UncollapsedGibbsIBP(nn.Module):
         Z_new = Z[:,-k_new:]
         Z_old = Z[:,:-k_new]
         Z_new_T = Z_new.transpose(0,1)
-
+        # mu is k_new x D
         mu = (ones + (sig_n/sig_a).pow(2)*I).inverse() @ \
             Z_new_T @ (X - Z_old@A)
-
+        # cov is k_new x k_new
         cov = sig_n.pow(2) * (ones + (sig_n/sig_a).pow(2)*I).inverse()
-        A_new = torch.zeros(K,D)
+        A_new = torch.zeros(k_new,D)
         for d in range(D):
             p_A = MVN(mu[:,d],cov)
             A_new[:,d] = p_A.sample()
         return A_new
 
-
     def _gibbs_init_A(K,D):
-        # Sample from p(A_k)
+        # Sample from prior p(A_k)
         Ak_mean = torch.zeros(D)
         Ak_cov = self.sigma_a.pow(2)*torch.eye(D)
         p_Ak = MVN(Ak_mean, Ak_cov)
@@ -175,7 +180,6 @@ class UncollapsedGibbsIBP(nn.Module):
             A[k] = p_Ak.sample()
         return A
 
-    # TODO: Debug
     def gibbs(self, X, iters):
         N = X.size()[0]
         D = X.size()[1]
@@ -184,9 +188,8 @@ class UncollapsedGibbsIBP(nn.Module):
         A = _gibbs_init_A(K,D) 
         for iteration in range(iters):
             A = _gibbs_resample_A(X,Z)
-            Z = _gibbs_resample_Z(X,Z,A)
-
-        # we'll need to return the full chain in general,
+            Z,A = _gibbs_resample_Z(X,Z,A)
+        # TODO we'll need to return the full chain in general,
         # but for now just return the last sample
         return A
 
