@@ -132,8 +132,8 @@ class UncollapsedGibbsIBP(nn.Module):
 
     def k_new(self,X,Z,A,i,truncation):
         '''
-        i: The loop calling this function decides how many new features k_new
-        each datapoint draws. i is the datapoint we are currently considering
+        i: The loop calling this function is asking this function
+        "how many new features (k_new) should data point i draw?"
 
         truncation: When computing the un-normalized posterior for k_new|X,Z,A, we cannot
         compute the posterior for the infinite amount of values k_new could take on. So instead
