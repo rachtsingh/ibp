@@ -85,45 +85,64 @@ class UncollapsedGibbsIBP(nn.Module):
         likelihoods = log_probs.exp()
         return likelihoods / likelihoods.sum()
 
-    def k_new(self,X,Z,A,i,truncation):
-        log_probs = torch.zeros(truncation)
-        poisson_probs = torch.zeros(truncation)
-        N,K = Z.size()
-        D = X.size()[1]
-        X_minus_ZA = X - Z@A
-        X_minus_ZA_T = X_minus_ZA.transpose(0,1)
+
+
+    def log_likelihood_given_k_new(self,cur_X_minus_ZA,Z,D,i,j): 
+        
+        N,K=Z.size()
+        cur_X_minus_ZA_T = cur_X_minus_ZA.transpose(0,1)
         sig_n = self.sigma_n
         sig_a = self.sigma_a
-        p_k_new = Pois(torch.tensor([self.alpha/N]))
-        for j in range(truncation):
-            if j==0:
-                log_probs[j]=0.0
-            else:
-                w = torch.ones(j,j) + (sig_n/sig_a).pow(2)*torch.eye(j)
-                # alternative: torch.potrf(a).diag().prod()
-                w_numpy = w.numpy()
-                sign,log_det = np.linalg.slogdet(w_numpy)
-                log_det = torch.tensor([log_det],dtype=torch.float32)
-                # Note this is in log space
-                first_term = j*D*(sig_n/sig_a).log() - ((D/2)*log_det)
+        
+        if j==0:
+            ret = 0.0
+        else:
+            w = torch.ones(j,j) + (sig_n/sig_a).pow(2)*torch.eye(j)
+            # alternative: torch.potrf(a).diag().prod()
+            w_numpy = w.numpy()
+            sign,log_det = np.linalg.slogdet(w_numpy)
+            log_det = torch.tensor([log_det],dtype=torch.float32)
+            # Note this is in log space
+            first_term = j*D*(sig_n/sig_a).log() - ((D/2)*log_det)
                  
-                second_term = 0.5* \
-                        torch.trace( \
-                        X_minus_ZA_T @ \
-                        Z[:,-j:] @ \
-                        w.inverse() @ \
-                        Z[:,-j:].transpose(0,1) @ \
-                        X_minus_ZA) / \
-                        sig_n.pow(2)
-                log_probs[j] = first_term + second_term
-            poisson_probs[j] = p_k_new.log_prob(j).exp()
+            second_term = 0.5* \
+                torch.trace( \
+                cur_X_minus_ZA_T @ \
+                Z[:,-j:] @ \
+                w.inverse() @ \
+                Z[:,-j:].transpose(0,1) @ \
+                cur_X_minus_ZA) / \
+                sig_n.pow(2)
+            ret = first_term + second_term
+        return ret
+
+    def k_new(self,X,Z,A,i,truncation):
+        log_likelihood = torch.zeros(truncation)
+        log_poisson_probs = torch.zeros(truncation)
+        N,K = Z.size()
+        D = X.size()[1]
+        p_k_new = Pois(torch.tensor([self.alpha/N]))
+        cur_X_minus_ZA = X - Z@A
+
+        for j in range(truncation):
+
+            # Compute the log likelihood of k_new equaling j
+            log_likelihood[j] = self.log_likelihood_given_k_new(cur_X_minus_ZA,Z,D,i,j)
+                       
+            # Compute the prior probability of k_new equaling j
+            log_poisson_probs[j] = p_k_new.log_prob(j)
+            
+            # Add new column to Z for next feature
             zeros = torch.zeros(N)
             Z = torch.cat((Z,torch.zeros(N,1)),1)
             Z[i][-1]=1
-        probs = self.renormalize_log_probs(log_probs)
-        poisson_probs = poisson_probs / poisson_probs.sum()
-        sample_probs = probs*poisson_probs
-        sample_probs = sample_probs / sample_probs.sum()
+        
+        # Compute log posterior of k_new and exp/normalize
+        log_sample_probs = log_likelihood + log_poisson_probs
+        sample_probs = self.renormalize_log_probs(log_sample_probs)
+
+        # Important: we changed Z for calculating p(k_new|...)
+        # so we must take off the extra rows
         Z = Z[:,:-truncation]
         assert Z.size()[1] == K
         posterior_k_new = Categorical(sample_probs)
