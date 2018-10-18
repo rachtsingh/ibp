@@ -24,3 +24,6 @@
 *.mtc1
 *.out
 *.synctex.gz
+
+# MacOS finder config
+*.DS_Store
