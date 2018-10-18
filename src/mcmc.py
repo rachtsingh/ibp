@@ -54,11 +54,10 @@ class UncollapsedGibbsIBP(nn.Module):
         p(z_nk=1|Z_-nk,A,X) propto p(z_nk=1)p(X|Z,A)
         '''
         N,D = X.size()
-        
-        # Prior on Z[i][k]
         Z_k = Z[:,k]
+        # Called m_-nk in the paper
         m = Z_k.sum() - Z_k[i]
-
+    
         # If Z_nk were 0
         Z_if_0 = Z.clone()
         Z_if_0[i,k] = 0
@@ -86,9 +85,24 @@ class UncollapsedGibbsIBP(nn.Module):
         return likelihoods / likelihoods.sum()
 
 
-
     def log_likelihood_given_k_new(self,cur_X_minus_ZA,Z,D,i,j): 
+        '''
+        cur_X_minus_ZA is equal to X - ZA, using Z without the 
+        extra j columns that are appended to compute the likelihood
+        for X|k_new=j. We have to pass this in because Z is changed
+        in a loop that calls this function.
         
+        Z: each time this function is called in the loop one level up, 
+        Z has one more column. Z is N x (K + k_new=j) dimensional.
+        
+        D: X.size()[1]
+
+        i: A few levels up from this function, we are looping through every datapoint,
+        and for each datapoint, considering how many new features k_new it draws. We
+        are considering the i^th datapoint.
+
+        j: We are calculating the likelihood for X|k_new = j
+        '''
         N,K=Z.size()
         cur_X_minus_ZA_T = cur_X_minus_ZA.transpose(0,1)
         sig_n = self.sigma_n
@@ -117,6 +131,16 @@ class UncollapsedGibbsIBP(nn.Module):
         return ret
 
     def k_new(self,X,Z,A,i,truncation):
+        '''
+        i: The loop calling this function decides how many new features k_new
+        each datapoint draws. i is the datapoint we are currently considering
+
+        truncation: When computing the un-normalized posterior for k_new|X,Z,A, we cannot
+        compute the posterior for the infinite amount of values k_new could take on. So instead
+        we compute from 0 up to some high number, truncation, and then normalize. In practice,
+        the posterior probability for k_new is so low that it underflows past truncation=20.
+        '''
+        
         log_likelihood = torch.zeros(truncation)
         log_poisson_probs = torch.zeros(truncation)
         N,K = Z.size()
