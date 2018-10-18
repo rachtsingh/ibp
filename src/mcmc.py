@@ -9,6 +9,7 @@ from torch.distributions import Bernoulli as Bern
 from torch.distributions import Poisson as Pois
 from torch.distributions import Categorical as Categorical
 
+
 class UncollapsedGibbsIBP(nn.Module):
     ################################################
     ########### UNCOLLAPSED GIBBS SAMPLER ##########
@@ -31,7 +32,9 @@ class UncollapsedGibbsIBP(nn.Module):
         p(X|Z,A) = 1/([2*pi*sigma_n^2]^(ND/2)) *
                exp([-1/(2*sigma_n^2)] tr((X-ZA)^T(X-ZA)))
 
-        Used in Zik resample
+        This likelihood is called from resample_Zik() and
+        is combined with the prior p(z_ik=1) to yield the
+        posterior p(z_ik=1|Z_-ik,A<X)
         '''
         N = X.size()[0]
         D = X.size()[1]
@@ -45,13 +48,14 @@ class UncollapsedGibbsIBP(nn.Module):
         return log_likelihood
 
 
-
     def resample_Zik(self,X,Z,A,i,k):
         '''
         m = number of observations not including
             Z_ik containing feature k
-        p(z_nk=1) = m / (N-1)
-        p(z_nk=1|Z_-nk,A,X) propto p(z_nk=1)p(X|Z,A)
+        
+        Prior: p(z_ik=1) = m / (N-1)
+        Posterior combines the prior with the likelihood:
+        p(z_ik=1|Z_-nk,A,X) propto p(z_ik=1)p(X|Z,A)
         '''
         N,D = X.size()
         Z_k = Z[:,k]
@@ -173,6 +177,19 @@ class UncollapsedGibbsIBP(nn.Module):
         return posterior_k_new.sample()
 
     def resample_Z(self,X,Z,A):
+        '''
+        - Re-samples existing Z_ik by using p(Z_ik=1|Z_-ik,A,X)
+        - Samples the number of new dishes that customer i takes
+          corresponding to:
+            - prior: p(k_new) propto Pois(alpha/N)
+            - likelihood: p(X|Z_old,A_old,k_new)
+            - posterior: p(k_new|X,Z_old,A_old)
+        - Adds the columns to Z corresponding to the new dishes,
+          setting those columns to 1 for customer i
+        - Adds rows to A corresponds to the new dishes.
+          - p(A_new|X,Z_new,Z_old,A_old) propto p(X|Z_new,Z_old,A_old,A_new)p(A_new)
+        '''
+        
         N = X.size()[0]
         K = A.size()[0]
         for i in range(N):
@@ -210,6 +227,16 @@ class UncollapsedGibbsIBP(nn.Module):
         return A
 
     def A_new(self,X,k_new,Z,A):
+        '''
+        p(A_new|X,Z_new,Z_old,A_old) propto
+            p(X|Z_new,Z_old,A_old,A_new)p(A_new) 
+        ~ N(mu,cov)
+            let ones = knew x knew matrix of ones
+            let sig_n2 = sigma_n^2
+            let sig_A2 = sigma_A^2
+            mu =  (ones + sig_n2/sig_a2 I)^{-1} Z_new_T (X - Z_old A_old)
+            cov = sig_n2 (ones + sig_n2/sig_A2 I)^{-1}
+        '''
         N,D = X.size()
         K = Z.size()[1]
         assert K == A.size()[0]+k_new
@@ -232,7 +259,10 @@ class UncollapsedGibbsIBP(nn.Module):
         return A_new
 
     def init_A(self,K,D):
-        # Sample from prior p(A_k)
+        '''
+        Sample from prior p(A_k)
+        A_k ~ N(0,sigma_A^2 I)
+        '''
         Ak_mean = torch.zeros(D)
         Ak_cov = self.sigma_a.pow(2)*torch.eye(D)
         p_Ak = MVN(Ak_mean, Ak_cov)
@@ -251,6 +281,14 @@ class UncollapsedGibbsIBP(nn.Module):
         return torch.tensor(np.take(Z_numpy,idx,axis=1))
         
     def init_Z(self,N=20):
+        '''
+        Samples from the Indian Buffet Process:
+        First Customer i=1 takes the first Poisson(alpha/(i=1)) dishes
+        Each next customer i>1 takes each previously sampled dish k
+        independently with m_k/i where m_k is the number of people who
+        have already sampled dish k. Z_ik=1 if the ith customer sampled
+        the kth dish and 0 otherwise.
+        '''
         Z = torch.zeros(N,self.K)
         K = int(self.K.item())
         total_dishes_sampled = 0
