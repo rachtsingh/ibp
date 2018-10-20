@@ -14,49 +14,77 @@ This is in rough temporal order of papers published about these methods. By (per
 
 \subsection{Gibbs sampling}
 
-The main reference is \citet{ghahramani2006infinite}, however \citet{doshi2009report} gives a clear explanation of both the collapsed and uncollapsed Gibbs samplers which proves useful for implementation.
+The main reference is \citet{ghahramani2006infinite}, however \citet{doshi2009report} gives a clear explanation of both the collapsed and uncollapsed Gibbs samplers and provides derivations useful for implementation.
 
 \medskip
 
-There are two major variants: \textbf{collapsed} and \textbf{uncollapsed} (depending on whether, in the linear Gaussian generative model, $A$ is marginalized over).
+There are two major variants of Gibbs: \textbf{collapsed} and \textbf{uncollapsed}. Collapsed sampling marginalizes out model or latent variables that you are not interested in obtaining samples of or a distribution for. For example, in the linear Gaussian IBP model, you may want $Z$ but not $A$. Uncollapsed sampling explicitly samples each model variable and latent variable. There are many choices of "partial collapsed" samplers between fully collapsed and fully uncollapsed. Each have their own trade-offs, depending on the size of the dataset and other considerations.
 
 \medskip
 
-However, there are a number of tweaks and improvements worth noting:
+There are a number of tweaks and improvements worth noting:
 \begin{enumerate}
-    \item MH split/merge proposals \citep{meeds2007modeling}
+    \item MH split/merge proposals \citep{meeds2007modeling} (Rachit, by this do you mean the Reverse Jump MCMC?)
     \item slice sampling \citep{teh2007stick}
     \item particle filtering \citep{wood2007particle}
     \item accelerated collapsed Gibbs sampling  \citep{doshi2009accelerated}
 \end{enumerate}
 
 \subsection{Coordinate Ascent Variational Inference (CAVI)}
-By CAVI we mean mean-field variatonal inference \citep{beal2003variational, wainwright2008graphical}. In this method, we factor the variational posterior into one component for each variable, and then compute the coordinate-wise updates by solving the maximization problem in one step (and repeat for each variable).
+By CAVI we mean mean-field variatonal inference \citep{beal2003variational, wainwright2008graphical}. In this method, we factor the variational posterior into one component for each variable, write out the ELBO in terms of these factors, take the derivative with respect to the parameters to optimize over, set it equal to 0 and solve. This yields coordinate-wise updates for the parameters of the variational distributions. These variational distributions are necessarily finite dimensional, which is referred to as the "truncation" of infinite models.
 
 \medskip
 
-The major reference here is \citet{doshi2009variational}, which implements CAVI using a truncated posterior approximation to both (1) finite approximation to the IBP and (2) the IBP, for linear Gaussian models.
+The major reference here is \citet{doshi2009variational}, which implements CAVI using a truncated posterior approximation to both (1) finite approximation to the IBP and (2) the infinite/untruncated IBP, for linear Gaussian models.
 
 \subsection{Stochastic Variatonal Inference (SVI)}
-By stochastic\footnote{This is \emph{stochastic} in the sense of Robbins \& Munro.} variatonal inference (SVI) we mean the method of \citet{hoffman2013stochastic}, which introduces batch-based approximate updates to global parameters via CAVI.
+
+Let $D$ be the data and $\theta$ be some model parameters. Say we
+are interested in optimizing a function $f(D,\theta)$ with respect
+to $\theta$. Stochastic optimization replaces this objective with
+a noisy function $\hat{f}$ such that $E[\hat{f}] = f$. The randomness
+of $\hat{f}$ is usually that of drawing random subsamples (batches) $x$ from the data and evaluating the function $f$ on the batch rather than the full
+dataset. See Robbins \& Munro.
+
+\medskip
+
+Stochastic Variational Inference (\citet{hoffman2013stochastic}) takes the CAVI objective and applies stochastic gradient descent. The CAVI obbjective is re-written in terms of data batches. This allows one to learn and optimize the global parameters (e.g. topics in a Topic Model) after just a few data points, improving inference for the rest of the data set in that iteration instead of using stale parameters.
 
 \medskip
 
 The main reference here (one of many) is \citet{shah2015empirical}, which does a (remarkably thorough) investigation into the different kinds of SVI algorithms that can be applied (especially looking into different kind of approximations, structured or not).
 
 \subsection{Autograd on exact ELBO VI (ADVI-exact)}
-This is a method for which we are looking for sources (it seems likely that we are the first to implement it solely because we have the technology to do so).
+
+Consider again the ELBO without using the stochastic objective involving data subsamples. In the traditional CAVI approach, one must derive all of the variational parameter updates by writing out the ELBO, taking derivatives, setting equal to 0, and solving. Another approach is to take advantage of autograd. Note that this still requires you to be able to write out the objective in closed form (CAVI also required this). This also
+requires that your autograd system implement derivatives for any function
+used in the ELBO. This does save you from derivative derivations!
+
+ADVI (citation goes here) does use autograd, but they consider the specific case of using autograd in a setting that may be called "doubly stochastic optimization of the ELBO":
+\begin{itemize}
+    \item ADVI uses SGD, so it's stochastic with respect to the data subsamples as described above for SVI.
+
+    \item ADVI assumes that the objective cannot be written in closed form and they optimize a stochastic approximation as follows. Usually, it's the expectation of the likelihood term with respect to the variational distributions over model parameters that cannot be written in closed form (corresponding to a conjugate model). So they sample particular instantiations of the model parameters and evaluate the likelihood given those particular parameters and average across samples. They use the reparameterization gradient to optimize through the sampling step.
+    This sampling/reparameterization gradient step is what adds the second level of stochasticity. 
+\end{itemize}
+
+We consider the use of autograd to be relevant and preferable in
+the non-stochastic case, the SVI case, and the doubly stochastic ADVI case.
 
 \medskip
 
-Essentially, from \citet{doshi2009report} we have an exact\footnote{What about the $\E[\text{log stick}]$ term?} form for the ELBO for a particular dataset $X$. So, we can do gradient ascent on this term directly via autograd.
+From \citet{doshi2009report} we have an exact form of the ELBO for the finite approximation to the IBP and an \textit{almost closed form} of the ELBO for the infinite IBP ($\E[\text{log stick}]$ term needs approximation, but once it is approximated, we can take it as part of the closed-form
+objective). We can do gradient ascent on ELBO in either case directly via autograd with minimal intervention to approximate the log stick term. Moreover, if we can approximate the log-stick term in a differentiable way, then we can use gradient ascent without any intervention to optimize slightly-inexact ELBO.
+
 
 \medskip
 
 Note that this is different from the usual method employed in VAEs, where the ELBO is sampled - here the ELBO is exact.
 
 \subsection{Autograd on sampled ELBO (ADVI)}
-This is essentially the same as the above, except that we sample the ELBO to get our estimate. In theory this isn't marked different from ADVI-exact if we use reparametrization gradients\footnote{Which is pretty much all the time these days}, but this is a theoretical assumption. In many models it's impossible to do ADVI-exact, but ADVI in general is often possible.
+
+AS mentioned, this approach uses autograd on a stochastic approximation to the ELBO that samples model parameters from the variational distribution instead of integrating the likelihood with respect to the variational distributions over model parameters. One still has the additional choice here to be stochastic over data as well. Approximating the likelihood integral allows you to work with non-conjugate models.
+
 
 \subsection{Variational Autoencoders (VAE)}
 In this method, the main difference is the addition of \emph{amortization}, i.e. a map from $x \to \lambda(x)$ for the variational distribution $q(z, \pi; \lambda)$. Note that this limits the variational posterior, so in theory this method should be less effective than regular CAVI as a mean-field method.
@@ -67,6 +95,10 @@ The two main references for this are \citet{singhstructured, chatzis2018indian} 
 
 \subsection{Semi-amortized Variational Autoencoders (SA-VAE)}
 This is a reference to \citet{kim2018semi}, which essentially blurs the line between SVI and VAEs by "semi-amortizing"\footnote{Since the line is, I guess, amortization}. Note that \citet{cremer2018inference,krishnan2018challenges,hjelm2016iterative} are also recent works that consider the amortization gap - \citet{kim2018semi} is perhaps the most successful but maybe the most difficult to implement.
+
+\medskip
+
+A much newer reference \href{https://openreview.net/forum?id=rylDfnCqF7}{still under review} proposes something much simpler: at the beginning of training, just update the inference network much more than the generative model. The decision of when to stop ``aggressive`` updates is based on the mutual information between $\v z$ and $\v x$ in $q(\v z | \v x)$.
 
 \section{What does inference mean?}
 We have to make a clear distinction between the two types of inference\footnote{We take it as given (since this is a nonparametric Bayesian method) that what we care about is the (approximate) posterior, whether it's a parametrized distribution or samples from that distribution.} that we care about: (1) inference on \textbf{local} variables (i.e. $z_{nk}$) and (2) inference on \textbf{global} variables (i.e. $A, \pi$).

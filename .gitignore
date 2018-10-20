@@ -1,29 +1,33 @@
 **/__pycache__
 
 # for LaTeX
-*.aux
-*.glo
-*.idx
-*.log
-*.toc
-*.ist
-*.acn
-*.acr
-*.alg
-*.bbl
-*.blg
-*.dvi
-*.glg
-*.gls
-*.ilg
-*.ind
-*.lof
-*.lot
-*.maf
-*.mtc
-*.mtc1
-*.out
-*.synctex.gz
+**/*.aux
+**/*.glo
+**/*.idx
+**/*.log
+**/*.toc
+**/*.ist
+**/*.acn
+**/*.acr
+**/*.alg
+**/*.bbl
+**/*.blg
+**/*.dvi
+**/*.glg
+**/*.gls
+**/*.ilg
+**/*.ind
+**/*.lof
+**/*.lot
+**/*.maf
+**/*.mtc
+**/*.mtc1
+**/*.out
+**/*.synctex.gz
+**/*.fls
+**/*-blx.bib
+**/*.run.xml
+**/*.fdb_latexmk
 
 # MacOS finder config
-*.DS_Store
+**/*.DS_Store
