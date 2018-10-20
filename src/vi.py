@@ -3,7 +3,7 @@ from torch import nn
 from torch import digamma
 from torch.distributions import MultivariateNormal as MVN
 from torch.distributions import Bernoulli as Bern
-from utils import register_hooks
+from utils import register_hooks, visualize_A
 
 import math
 LOG_2PI = 1.8378770664093453
@@ -201,7 +201,7 @@ class InfiniteIBP(nn.Module):
 
     @property
     def tau(self):
-        return nn.Softplus()(self._tau)
+        return 1. + nn.Softplus()(self._tau)
 
     @property
     def nu(self):
@@ -219,11 +219,14 @@ class InfiniteIBP(nn.Module):
         This is the evidence lower bound evaluated at X, when X is of shape (N, D)
         i.e. log p_K(X | theta) \geq ELBO
         """
-        return self._1_feature_prob(self.tau).sum() + \
-               self._4_likelihood(X, self.nu, self.phi_var, self.phi) + \
-               self._2_feature_assign(self.nu, self.tau).sum()
-               # self._3_feature_prob(self.phi_var, self.phi).sum() + \
-               # self._5_entropy(self.tau, self.phi_var, self.nu)
+        import pdb; pdb.set_trace()
+        a = self._1_feature_prob(self.tau).sum()
+        b = self._4_likelihood(X, self.nu, self.phi_var, self.phi).sum()
+        c = self._2_feature_assign(self.nu, self.tau).sum()
+        d = self._3_feature_prob(self.phi_var, self.phi).sum()
+        e = self._5_entropy(self.tau, self.phi_var, self.nu).sum()
+        print(a.item() < 0, b.item() < 0, c.item() < 0, d.item() < 0, e.item() > 0)
+        return a + b + c + d + e
 
     def _1_feature_prob(self, tau):
         """
@@ -273,7 +276,7 @@ class InfiniteIBP(nn.Module):
 
         Computes Cross Entropy: E_q(v),q(Z) [logp(z_nk|v)]
         """
-        return nu * (digamma(tau[:,1]) - digamma(tau.sum(dim=1))).cumsum(0) + \
+        return (nu * (digamma(tau[:,1]) - digamma(tau.sum(dim=1))).cumsum(0)) + \
             (1. - nu) * self._E_log_stick(tau)[0]
 
     def _3_feature_prob(self, phi_var, phi):
@@ -288,7 +291,7 @@ class InfiniteIBP(nn.Module):
         Same as Finite Approach
         """
         ret = 0
-        constant = -0.5 * self.D * (self.sigma_a.log() + LOG_2PI)
+        constant = -0.5 * self.D * (2 * self.sigma_a.log() + LOG_2PI)
         for k in range(self.K):
             other_term = (-0.5 / (self.sigma_a**2)) * \
                 (torch.trace(phi_var[k]) + phi[k].pow(2).sum())
@@ -336,14 +339,21 @@ class InfiniteIBP(nn.Module):
         Computes Entropy H[q] for all variational distributions q
         Same as Finite Approach, just rename entropy_q_pi to entropy_q_v.
         """
-        entropy_q_v = (tau.lgamma().sum(1) - tau.sum(1).lgamma() - \
-            (tau[:, 0] - 1) * digamma(tau[:, 0]) - \
-            (tau[:, 1] - 1) * digamma(tau[:, 1]) + \
-            (tau.sum(1) - 2.) * digamma(tau.sum(1))).sum()
+        # entropy_q_v = ((tau.lgamma().sum(1) - tau.sum(1).lgamma()) - \
+            # ((tau - 1.) * digamma(tau)) .sum(1) + \
+            # ((tau.sum(1) - 2.) * digamma(tau.sum(1)))).sum()
+        entropy_q_v = 0
+        for k in range(self.K):
+            tau_1 = tau[k, 0]
+            tau_2 = tau[k, 1]
+            entropy_q_v += tau_1.lgamma() + tau_2.lgamma() - (tau_1 + tau_2).lgamma()
+            entropy_q_v -= ((tau_1 - 1) * digamma(tau_1) + (tau_2 - 1) * digamma(tau_2))
+            entropy_q_v += ((tau_1 + tau_2 - 2) * digamma(tau_1 + tau_2))
         entropy_q_A = 0
         for k in range(self.K):
             entropy_q_A += 0.5 * (self.D * (1 + LOG_2PI) + torch.logdet(phi_var[k])).sum()
         entropy_q_z = -(nu * (nu + EPS).log() + (1 - nu) * (1 - nu + EPS).log()).sum()
+        print(entropy_q_v.item() > 0, entropy_q_A.item() > 0, entropy_q_z.item() > 0)
         return entropy_q_v + entropy_q_A + entropy_q_z
 
     def cavi(self, X):

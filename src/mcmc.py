@@ -9,6 +9,7 @@ from torch.distributions import Bernoulli as Bern
 from torch.distributions import Poisson as Pois
 from torch.distributions import Categorical as Categorical
 
+from utils import visualize_A
 
 class UncollapsedGibbsIBP(nn.Module):
     ################################################
@@ -20,7 +21,7 @@ class UncollapsedGibbsIBP(nn.Module):
     def __init__(self, alpha, K, sigma_a, sigma_n, D):
         super(UncollapsedGibbsIBP, self).__init__()
 
-        # idempotent - all are constant and have requires_grad=True
+        # idempotent - all are constant and have requires_grad=False
         self.alpha = torch.tensor(alpha)
         self.K = torch.tensor(K)
         self.sigma_a = torch.tensor(sigma_a)
@@ -39,7 +40,7 @@ class UncollapsedGibbsIBP(nn.Module):
         N = X.size()[0]
         D = X.size()[1]
         pi = np.pi
-        sig_n2 = self.sigma_n.pow(2)      
+        sig_n2 = self.sigma_n.pow(2)
         one = torch.tensor([1.0])
         log_first_term = one.log() - (N*D/2.)*(2*pi*sig_n2).log()
         log_second_term = ((-1./(2*sig_n2)) * \
@@ -52,7 +53,7 @@ class UncollapsedGibbsIBP(nn.Module):
         '''
         m = number of observations not including
             Z_ik containing feature k
-        
+
         Prior: p(z_ik=1) = m / (N-1)
         Posterior combines the prior with the likelihood:
         p(z_ik=1|Z_-nk,A,X) propto p(z_ik=1)p(X|Z,A)
@@ -61,24 +62,24 @@ class UncollapsedGibbsIBP(nn.Module):
         Z_k = Z[:,k]
         # Called m_-nk in the paper
         m = Z_k.sum() - Z_k[i]
-    
+
         # If Z_nk were 0
         Z_if_0 = Z.clone()
         Z_if_0[i,k] = 0
         log_prior_if_0 = (1 - (m/(N-1))).log()
         log_likelihood_if_0 = self.log_likelihood_given_ZA(X,Z_if_0,A)
         log_score_if_0 = log_prior_if_0 + log_likelihood_if_0
-        
+
         # If Z_nk were 1
         Z_if_1 = Z.clone()
         Z_if_1[i,k]=1
         log_prior_if_1 = (m/(N-1)).log()
         log_likelihood_if_1 = self.log_likelihood_given_ZA(X,Z_if_1,A)
         log_score_if_1 = log_prior_if_1 + log_likelihood_if_1
-        
+
         # Exp, Normalize, Sample
         log_scores = torch.cat((log_score_if_0,log_score_if_1),0)
-        probs = self.renormalize_log_probs(log_scores) 
+        probs = self.renormalize_log_probs(log_scores)
         p_znk = Bern(probs[1])
         return p_znk.sample()
 
@@ -89,16 +90,16 @@ class UncollapsedGibbsIBP(nn.Module):
         return likelihoods / likelihoods.sum()
 
 
-    def log_likelihood_given_k_new(self,cur_X_minus_ZA,Z,D,i,j): 
+    def log_likelihood_given_k_new(self,cur_X_minus_ZA,Z,D,i,j):
         '''
-        cur_X_minus_ZA is equal to X - ZA, using Z without the 
+        cur_X_minus_ZA is equal to X - ZA, using Z without the
         extra j columns that are appended to compute the likelihood
         for X|k_new=j. We have to pass this in because Z is changed
         in a loop that calls this function.
-        
-        Z: each time this function is called in the loop one level up, 
+
+        Z: each time this function is called in the loop one level up,
         Z has one more column. Z is N x (K + k_new=j) dimensional.
-        
+
         D: X.size()[1]
 
         i: A few levels up from this function, we are looping through every datapoint,
@@ -111,7 +112,7 @@ class UncollapsedGibbsIBP(nn.Module):
         cur_X_minus_ZA_T = cur_X_minus_ZA.transpose(0,1)
         sig_n = self.sigma_n
         sig_a = self.sigma_a
-        
+
         if j==0:
             ret = 0.0
         else:
@@ -122,7 +123,7 @@ class UncollapsedGibbsIBP(nn.Module):
             log_det = torch.tensor([log_det],dtype=torch.float32)
             # Note this is in log space
             first_term = j*D*(sig_n/sig_a).log() - ((D/2)*log_det)
-                 
+
             second_term = 0.5* \
                 torch.trace( \
                 cur_X_minus_ZA_T @ \
@@ -144,7 +145,7 @@ class UncollapsedGibbsIBP(nn.Module):
         we compute from 0 up to some high number, truncation, and then normalize. In practice,
         the posterior probability for k_new is so low that it underflows past truncation=20.
         '''
-        
+
         log_likelihood = torch.zeros(truncation)
         log_poisson_probs = torch.zeros(truncation)
         N,K = Z.size()
@@ -156,15 +157,15 @@ class UncollapsedGibbsIBP(nn.Module):
 
             # Compute the log likelihood of k_new equaling j
             log_likelihood[j] = self.log_likelihood_given_k_new(cur_X_minus_ZA,Z,D,i,j)
-                       
+
             # Compute the prior probability of k_new equaling j
             log_poisson_probs[j] = p_k_new.log_prob(j)
-            
+
             # Add new column to Z for next feature
             zeros = torch.zeros(N)
             Z = torch.cat((Z,torch.zeros(N,1)),1)
             Z[i][-1]=1
-        
+
         # Compute log posterior of k_new and exp/normalize
         log_sample_probs = log_likelihood + log_poisson_probs
         sample_probs = self.renormalize_log_probs(log_sample_probs)
@@ -189,7 +190,7 @@ class UncollapsedGibbsIBP(nn.Module):
         - Adds rows to A corresponds to the new dishes.
           - p(A_new|X,Z_new,Z_old,A_old) propto p(X|Z_new,Z_old,A_old,A_new)p(A_new)
         '''
-        
+
         N = X.size()[0]
         K = A.size()[0]
         for i in range(N):
@@ -229,7 +230,7 @@ class UncollapsedGibbsIBP(nn.Module):
     def A_new(self,X,k_new,Z,A):
         '''
         p(A_new|X,Z_new,Z_old,A_old) propto
-            p(X|Z_new,Z_old,A_old,A_new)p(A_new) 
+            p(X|Z_new,Z_old,A_old,A_new)p(A_new)
         ~ N(mu,cov)
             let ones = knew x knew matrix of ones
             let sig_n2 = sigma_n^2
@@ -279,7 +280,7 @@ class UncollapsedGibbsIBP(nn.Module):
         values = np.dot(powers,Z_numpy)
         idx = values.argsort()[::-1]
         return torch.tensor(np.take(Z_numpy,idx,axis=1))
-        
+
     def init_Z(self,N=20):
         '''
         Samples from the Indian Buffet Process:
@@ -316,15 +317,15 @@ class UncollapsedGibbsIBP(nn.Module):
         D = X.size()[1]
         K = self.K
         Z = self.init_Z(N)
-        A = self.init_A(K,D) 
+        A = self.init_A(K,D)
+        As = []
         for iteration in range(iters):
             print('iter:',iteration)
             A = self.resample_A(X,Z)
             Z,A = self.resample_Z(X,Z,A)
             Z,A = self.trim_ZA(Z,A)
-        # TODO we'll need to return the full chain in general,
-        # but for now just return the last sample
-        return A
+            As.append(A.clone().view(-1, 6, 6).detach().numpy()[0])
+        return As
 
 def fit_ugibbs_to_ggblocks():
     from data import generate_gg_blocks, generate_gg_blocks_dataset
@@ -334,8 +335,9 @@ def fit_ugibbs_to_ggblocks():
     model = UncollapsedGibbsIBP(4., K, 0.1, 0.5, 36) # these are bad parameters
     model.train()
 
-    last_sample_A = model.gibbs(X, iters=100)
-    visualize_A(last_sample_A.view(-1, 6, 6).detach().numpy()[0])
+    last_sample_A = model.gibbs(X, iters=50)
+    for i in range(50):
+        visualize_A(As[i])
 
 if __name__ == '__main__':
     """
