@@ -149,6 +149,14 @@ EPS = 1e-16
 #         entropy_q_z = -(nu * nu.log() + (1 - nu) * (1 - nu).log()).sum()
 #         return entropy_q_pi + entropy_q_A + entropy_q_z
 
+# imports to make Jeffrey's code work
+import numpy as np
+import numpy.random as npr
+from numpy.random import beta
+import scipy.special as sps
+from scipy.special import gamma, gammaln, logsumexp
+from numpy.linalg import slogdet
+
 class InfiniteIBP(nn.Module):
     """
     Infinite/Non-Truncated Indian Buffet Process
@@ -219,13 +227,13 @@ class InfiniteIBP(nn.Module):
         This is the evidence lower bound evaluated at X, when X is of shape (N, D)
         i.e. log p_K(X | theta) \geq ELBO
         """
-        import pdb; pdb.set_trace()
         a = self._1_feature_prob(self.tau).sum()
         b = self._4_likelihood(X, self.nu, self.phi_var, self.phi).sum()
         c = self._2_feature_assign(self.nu, self.tau).sum()
         d = self._3_feature_prob(self.phi_var, self.phi).sum()
         e = self._5_entropy(self.tau, self.phi_var, self.nu).sum()
         print(a.item() < 0, b.item() < 0, c.item() < 0, d.item() < 0, e.item() > 0)
+        print((b + c + d + e).item() > 0)
         return a + b + c + d + e
 
     def _1_feature_prob(self, tau):
@@ -235,10 +243,34 @@ class InfiniteIBP(nn.Module):
 
         Computes Cross Entropy: E_q(v) [logp(v_k|alpha)]
         """
-        return self.alpha.log() + (self.alpha - 1) * \
-            (digamma(tau[:, 0]) - digamma(tau.sum(dim=1)))
+        return self.alpha.log() + \
+            ((self.alpha - 1) * (digamma(tau[:, 0]) - digamma(tau.sum(dim=1))))
 
-    # TODO WORK IN PROGRESS: FINISH / ReWRITE / CHECK / DEBUG THIS FUNCTION
+    def jeffrey_compute_q_Elogstick(tau, k):
+        tau = tau.T
+        # k = k + 1 # length
+        digamma1 = np.array([sps.digamma(tau[0][i]) for i in range(k)])
+        digamma2 = np.array([sps.digamma(tau[1][i]) for i in range(k)])
+        digamma12 = np.array([sps.digamma(tau[0][i] + tau[1][i]) for i in range(k)])
+
+        # initialize q distribution
+        lqs = np.array([digamma2[i] + sum(digamma1[:i-1]) - sum(digamma12[:i]) for i in range(k)])
+        lqs[0] = digamma2[0] - digamma12[0] # dumb indexing fix
+        q_partition = logsumexp(lqs)
+        qs = np.exp(lqs - q_partition)
+        q_tails = [qs[-1]]
+        for m in range(k-2, -1, -1):
+            q_tails.append(qs[m] + q_tails[-1])
+        q_tails.reverse()
+
+        Elogstick = np.sum(qs * digamma2)
+        Elogstick += sum([digamma1[m] * q_tails[m+1] for m in range(k-1)])
+        Elogstick += -sum([digamma12[m] * q_tails[m] for m in range(k)])
+        Elogstick += - np.sum(qs * np.log(qs))
+
+        # return
+        return qs , Elogstick
+
     def _E_log_stick(self, tau):
         """
         @param tau: (K, 2)
@@ -246,17 +278,31 @@ class InfiniteIBP(nn.Module):
 
         where the first return value is E_log_stick, and the second is q
         """
+        np.set_printoptions(precision=2, suppress=True)
+        # let's compute the distribution by hand
+        hand_q = np.zeros(2)
+        taud = tau.clone().detach()
+        from scipy.special import digamma as dgm
+        hand_q[0] = dgm(taud[0, 1].numpy()) - dgm(taud[0, 1].numpy() + taud[0, 0].numpy())
+        hand_q[1] = dgm(taud[1, 1].numpy()) + dgm(taud[0, 0].numpy()) - \
+            (dgm(taud[0, 0].numpy() + taud[0, 1].numpy()) + dgm(taud[1, 0].numpy() + taud[1, 1].numpy()))
+
+        a = np.exp(hand_q)
+        print("hand computed q (k=2):")
+        print(a/a.sum())
+
         # we use the same indexing as in eq. (10)
         q = torch.zeros(self.K, self.K)
 
         # working in log space until the last step
+        # q += digamma(tau[:, 1]).view(1, -1)
+        # q += 
         first_term = digamma(tau[:, 1])
         second_term = digamma(tau[:, 0]).cumsum(0) - digamma(tau[:, 0])
         third_term = digamma(tau.sum(1)).cumsum(0)
         q += (first_term + second_term + third_term).view(1, -1)
-        q = torch.tril(q).exp()
+        q = torch.tril(q.exp())
         q = torch.nn.functional.normalize(q, p=1, dim=1)
-
         # TODO: should we detach q? what does that do to the ADVI?
 
         # each vector should be size (K,)
@@ -266,7 +312,41 @@ class InfiniteIBP(nn.Module):
         temp_q = q.clone() # TODO: why clone?
         temp_q[q == 0] = 1. # since half of q is 0, log(1) is now a mask
         fourth = (temp_q * (temp_q + EPS).log()).sum(1)
-        return first + second + third + fourth, q
+        torch_e_logstick = first + second + third + fourth
+
+        # return torch_e_logstick, q
+        #
+        # run Jeffrey's code
+        #
+        tau = tau.detach().numpy().T
+        k = 2
+        digamma1 = np.array([sps.digamma(tau[0][i]) for i in range(k)])
+        digamma2 = np.array([sps.digamma(tau[1][i]) for i in range(k)])
+        digamma12 = np.array([sps.digamma(tau[0][i] + tau[1][i]) for i in range(k)])
+
+        # initialize q distribution
+        lqs = np.array([digamma2[i] + sum(digamma1[:i-1]) - sum(digamma12[:i]) for i in range(k)])
+        lqs[0] = digamma2[0] - digamma12[0] # dumb indexing fix
+        q_partition = logsumexp(lqs)
+        qs = np.exp(lqs - q_partition)
+        q_tails = [qs[-1]]
+        for m in range(k-2, -1, -1):
+            q_tails.append(qs[m] + q_tails[-1])
+        q_tails.reverse()
+
+        print("our version (for all k):")
+        print(q.detach().numpy())
+        print("Jeffrey's compute_q_Elogstick (for k=2)")
+        print(qs)
+        import pdb; pdb.set_trace()
+
+        Elogstick = np.sum(qs * digamma2)
+        Elogstick += sum([digamma1[m] * q_tails[m+1] for m in range(k-1)])
+        Elogstick += -sum([digamma12[m] * q_tails[m] for m in range(k)])
+        Elogstick += - np.sum(qs * np.log(qs))
+
+        # return
+        return qs , Elogstick
 
     def _2_feature_assign(self, nu, tau):
         """
@@ -276,8 +356,8 @@ class InfiniteIBP(nn.Module):
 
         Computes Cross Entropy: E_q(v),q(Z) [logp(z_nk|v)]
         """
-        return (nu * (digamma(tau[:,1]) - digamma(tau.sum(dim=1))).cumsum(0)) + \
-            (1. - nu) * self._E_log_stick(tau)[0]
+        return (nu * (digamma(tau[:,1]) - digamma(tau.sum(dim=1))).cumsum(0) + \
+            (1. - nu) * self._E_log_stick(tau)[0])
 
     def _3_feature_prob(self, phi_var, phi):
         """
