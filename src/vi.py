@@ -281,12 +281,12 @@ class InfiniteIBP(nn.Module):
         np.set_printoptions(precision=2, suppress=True)
         # let's compute the distribution by hand
         hand_q = np.zeros(2)
-        taud = tau.clone().detach()
+        taud = tau.clone().detach().numpy()
         from scipy.special import digamma as dgm
-        hand_q[0] = dgm(taud[0, 1].numpy()) - dgm(taud[0, 1].numpy() + taud[0, 0].numpy())
-        hand_q[1] = dgm(taud[1, 1].numpy()) + dgm(taud[0, 0].numpy()) - \
-            (dgm(taud[0, 0].numpy() + taud[0, 1].numpy()) + dgm(taud[1, 0].numpy() + taud[1, 1].numpy()))
-
+        hand_q[0] = dgm(taud[0, 1]) - dgm(taud[0, 1] + taud[0, 0])
+        hand_q[1] = dgm(taud[1, 1]) + dgm(taud[0, 0]) - \
+            (dgm(taud[0, 0] + taud[0, 1]) + dgm(taud[1, 0] + taud[1, 1]))
+        # print(hand_q)
         a = np.exp(hand_q)
         print("hand computed q (k=2):")
         print(a/a.sum())
@@ -295,12 +295,14 @@ class InfiniteIBP(nn.Module):
         q = torch.zeros(self.K, self.K)
 
         # working in log space until the last step
-        # q += digamma(tau[:, 1]).view(1, -1)
-        # q += 
         first_term = digamma(tau[:, 1])
         second_term = digamma(tau[:, 0]).cumsum(0) - digamma(tau[:, 0])
         third_term = digamma(tau.sum(1)).cumsum(0)
-        q += (first_term + second_term + third_term).view(1, -1)
+        # print(first_term.detach().numpy())
+        # print(second_term.detach().numpy())
+        # print(third_term.detach().numpy())
+        q += (first_term + second_term - third_term).view(1, -1)
+        # print(q)
         q = torch.tril(q.exp())
         q = torch.nn.functional.normalize(q, p=1, dim=1)
         # TODO: should we detach q? what does that do to the ADVI?
