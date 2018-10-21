@@ -342,19 +342,9 @@ class InfiniteIBP(nn.Module):
 
     @staticmethod
     def _entropy_q_v(tau):
-        # alternative, more manual approach
-        K = tau.shape[0]
-        entropy_q_v = 0
-        for k in range(K):
-            tau_1 = tau[k, 0]
-            tau_2 = tau[k, 1]
-            entropy_q_v += tau_1.lgamma() + tau_2.lgamma() - (tau_1 + tau_2).lgamma()
-            entropy_q_v -= ((tau_1 - 1) * digamma(tau_1) + (tau_2 - 1) * digamma(tau_2))
-            entropy_q_v += ((tau_1 + tau_2 - 2) * digamma(tau_1 + tau_2))
-        return entropy_q_v
-        # return (tau.lgamma().sum(1) - tau.sum(1).lgamma()) - \
-        #     ((tau - 1.) * digamma(tau)) .sum(1) + \
-        #     ((tau.sum(1) - 2.) * digamma(tau.sum(1)))
+        return ((tau.lgamma().sum(1) - tau.sum(1).lgamma()) - \
+            ((tau - 1.) * digamma(tau)) .sum(1) + \
+            ((tau.sum(1) - 2.) * digamma(tau.sum(1)))).sum()
 
     @staticmethod
     def _entropy_q_A(phi_var):
@@ -439,7 +429,7 @@ def test_elbo_components(inputs=None):
 
     X = torch.randn(10, 36)
 
-    a = model._1_feature_prob(model.tau)
+    a = model._1_feature_prob(model.tau).sum()
     b = model._2_feature_assign(model.nu, model.tau).sum()
     c = model._3_feature_prob(model.phi_var, model.phi).sum()
     d = model._4_likelihood(X, model.nu, model.phi_var, model.phi).sum()
@@ -449,17 +439,17 @@ def test_elbo_components(inputs=None):
     entropy_q_A = InfiniteIBP._entropy_q_A(model.phi_var)
     entropy_q_z = InfiniteIBP._entropy_q_z(model.nu)
 
-    # check the sign of the various component KL divergences
-    assert ((a + entropy_q_v) >= 0).all(), "KL(q(pi) || p(pi)) is negative"
-    assert (b + entropy_q_z).item() >= 0, "KL(q(z) || p(z)) is negative"
-    assert (c + entropy_q_A).item() >= 0, "KL(q(A) || p(A)) is negative"
-    assert (a + b + c + e).item() >= 0, "KL divergence between q(...) || p(...) is negative"
+    # check the sign of the various KL divergences (summed, so less powerful than it could be)
+    assert (a + entropy_q_v).item() <= 0, "KL(q(pi) || p(pi)) is negative"
+    assert (b + entropy_q_z).item() <= 0, "KL(q(z) || p(z)) is negative"
+    assert (c + entropy_q_A).item() <= 0, "KL(q(A) || p(A)) is negative"
+    assert (a + b + c + e).item() <= 0, "KL divergence between q(...) || p(...) is negative"
 
-    # check the empirical value of the component KL divergences
+    # check the empirical value of the component KL divergences (this is a very strong test)
     from torch.distributions import Beta, kl_divergence
     p_pi = Beta(model.alpha, 1.)
     q_pi = Beta(model.tau[:, 0], model.tau[:, 1])
-    assert (kl_divergence(q_pi, p_pi) - (a + entropy_q_v)).abs().max() < 1e-6, "KL(q(pi) || p(pi)) is incorrect"
+    assert (kl_divergence(q_pi, p_pi).sum() + (a + entropy_q_v)).abs() < 1e-6, "KL(q(pi) || p(pi)) is incorrect"
 
 def fit_infinite_to_ggblocks_cavi():
     # TODO
@@ -495,5 +485,5 @@ if __name__ == '__main__':
     python src/vi.py will just check that the model works on a ggblocks dataset
     """
     # fit_infinite_to_ggblocks_advi_exact()
-    # test_q_E_logstick()
-    test_negative_elbo()
+    test_q_E_logstick()
+    test_elbo_components()
