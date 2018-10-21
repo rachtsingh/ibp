@@ -423,11 +423,14 @@ def test_q_E_logstick():
     assert np.abs((q[1, :2].numpy() - hand_q)).max() < 1e-6, "_E_log_stick doesn't compute q correctly"
 
 def test_elbo_components(inputs=None):
-    model = InfiniteIBP(4., 6, 0.1, 0.5, 36)
-    model.init_z(10)
-    model.train()
+    if inputs is None:
+        model = InfiniteIBP(4., 6, 0.1, 0.5, 36)
+        model.init_z(10)
+        model.train()
 
-    X = torch.randn(10, 36)
+        X = torch.randn(10, 36)
+    else:
+        model, X = inputs
 
     a = model._1_feature_prob(model.tau).sum()
     b = model._2_feature_assign(model.nu, model.tau).sum()
@@ -458,14 +461,14 @@ def fit_infinite_to_ggblocks_cavi():
 def fit_infinite_to_ggblocks_advi_exact():
     from data import generate_gg_blocks, generate_gg_blocks_dataset
     N = 100
-    X = generate_gg_blocks_dataset(N, 0.5)
+    X = generate_gg_blocks(N)
 
     model = InfiniteIBP(4., 6, 0.1, 0.5, 36)
     model.init_z(N)
     model.train()
 
     optimizer = torch.optim.Adam(model.parameters(), 3e-2)
-    for i in range(100):
+    for i in range(250):
         optimizer.zero_grad()
         loss = -model.elbo(X)
         print(loss.item())
@@ -477,6 +480,7 @@ def fit_infinite_to_ggblocks_advi_exact():
             # dot.save('tmp.dot')
         # print(torch.isnan(model.nu.grad).any())
         optimizer.step()
+        test_elbo_components((model, X))
     for i in range(6):
         visualize_A(model.phi.detach().numpy()[i])
 
@@ -484,6 +488,6 @@ if __name__ == '__main__':
     """
     python src/vi.py will just check that the model works on a ggblocks dataset
     """
-    # fit_infinite_to_ggblocks_advi_exact()
-    test_q_E_logstick()
-    test_elbo_components()
+    fit_infinite_to_ggblocks_advi_exact()
+    # test_q_E_logstick()
+    # test_elbo_components()
