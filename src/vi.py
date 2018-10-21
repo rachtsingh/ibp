@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 from torch import nn
 from torch import digamma
 from torch.distributions import MultivariateNormal as MVN
@@ -9,6 +10,8 @@ import math
 LOG_2PI = 1.8378770664093453
 
 EPS = 1e-16
+
+np.set_printoptions(precision=3, suppress=True)
 
 # class FiniteIBP(nn.Module):
 #     """
@@ -225,15 +228,13 @@ class InfiniteIBP(nn.Module):
     def elbo(self, X):
         """
         This is the evidence lower bound evaluated at X, when X is of shape (N, D)
-        i.e. log p_K(X | theta) \geq ELBO
+        i.e. log p_K(X | theta) geq ELBO
         """
         a = self._1_feature_prob(self.tau).sum()
         b = self._4_likelihood(X, self.nu, self.phi_var, self.phi).sum()
         c = self._2_feature_assign(self.nu, self.tau).sum()
         d = self._3_feature_prob(self.phi_var, self.phi).sum()
         e = self._5_entropy(self.tau, self.phi_var, self.nu).sum()
-        print(a.item() < 0, b.item() < 0, c.item() < 0, d.item() < 0, e.item() > 0)
-        print((b + c + d + e).item() > 0)
         return a + b + c + d + e
 
     def _1_feature_prob(self, tau):
@@ -246,109 +247,37 @@ class InfiniteIBP(nn.Module):
         return self.alpha.log() + \
             ((self.alpha - 1) * (digamma(tau[:, 0]) - digamma(tau.sum(dim=1))))
 
-    def jeffrey_compute_q_Elogstick(tau, k):
-        tau = tau.T
-        # k = k + 1 # length
-        digamma1 = np.array([sps.digamma(tau[0][i]) for i in range(k)])
-        digamma2 = np.array([sps.digamma(tau[1][i]) for i in range(k)])
-        digamma12 = np.array([sps.digamma(tau[0][i] + tau[1][i]) for i in range(k)])
-
-        # initialize q distribution
-        lqs = np.array([digamma2[i] + sum(digamma1[:i-1]) - sum(digamma12[:i]) for i in range(k)])
-        lqs[0] = digamma2[0] - digamma12[0] # dumb indexing fix
-        q_partition = logsumexp(lqs)
-        qs = np.exp(lqs - q_partition)
-        q_tails = [qs[-1]]
-        for m in range(k-2, -1, -1):
-            q_tails.append(qs[m] + q_tails[-1])
-        q_tails.reverse()
-
-        Elogstick = np.sum(qs * digamma2)
-        Elogstick += sum([digamma1[m] * q_tails[m+1] for m in range(k-1)])
-        Elogstick += -sum([digamma12[m] * q_tails[m] for m in range(k)])
-        Elogstick += - np.sum(qs * np.log(qs))
-
-        # return
-        return qs , Elogstick
-
-    def _E_log_stick(self, tau):
+    def _E_log_stick(self, tau, K=None):
         """
         @param tau: (K, 2)
         @return: ((K,), (K, K))
 
         where the first return value is E_log_stick, and the second is q
         """
-        np.set_printoptions(precision=2, suppress=True)
-        # let's compute the distribution by hand
-        hand_q = np.zeros(2)
-        taud = tau.clone().detach().numpy()
-        from scipy.special import digamma as dgm
-        hand_q[0] = dgm(taud[0, 1]) - dgm(taud[0, 1] + taud[0, 0])
-        hand_q[1] = dgm(taud[1, 1]) + dgm(taud[0, 0]) - \
-            (dgm(taud[0, 0] + taud[0, 1]) + dgm(taud[1, 0] + taud[1, 1]))
-        # print(hand_q)
-        a = np.exp(hand_q)
-        print("hand computed q (k=2):")
-        print(a/a.sum())
-
+        if K is None:
+            K = self.K
         # we use the same indexing as in eq. (10)
-        q = torch.zeros(self.K, self.K)
+        q = torch.zeros(K, K)
 
         # working in log space until the last step
         first_term = digamma(tau[:, 1])
         second_term = digamma(tau[:, 0]).cumsum(0) - digamma(tau[:, 0])
         third_term = digamma(tau.sum(1)).cumsum(0)
-        # print(first_term.detach().numpy())
-        # print(second_term.detach().numpy())
-        # print(third_term.detach().numpy())
         q += (first_term + second_term - third_term).view(1, -1)
-        # print(q)
         q = torch.tril(q.exp())
         q = torch.nn.functional.normalize(q, p=1, dim=1)
         # TODO: should we detach q? what does that do to the ADVI?
 
         # each vector should be size (K,)
         first = (q * digamma(tau[:, 1]).view(1, -1)).sum(1)
-        second = ((1 - q.cumsum(1)) * tau[:, 1]).sum(1)
+        second = ((1 - q.cumsum(1)) * tau[:, 0]).sum(1)
         third = ((1 - q.cumsum(1) - q) * tau.sum(1)).sum(1)
         temp_q = q.clone() # TODO: why clone?
         temp_q[q == 0] = 1. # since half of q is 0, log(1) is now a mask
         fourth = (temp_q * (temp_q + EPS).log()).sum(1)
         torch_e_logstick = first + second + third + fourth
 
-        # return torch_e_logstick, q
-        #
-        # run Jeffrey's code
-        #
-        tau = tau.detach().numpy().T
-        k = 2
-        digamma1 = np.array([sps.digamma(tau[0][i]) for i in range(k)])
-        digamma2 = np.array([sps.digamma(tau[1][i]) for i in range(k)])
-        digamma12 = np.array([sps.digamma(tau[0][i] + tau[1][i]) for i in range(k)])
-
-        # initialize q distribution
-        lqs = np.array([digamma2[i] + sum(digamma1[:i-1]) - sum(digamma12[:i]) for i in range(k)])
-        lqs[0] = digamma2[0] - digamma12[0] # dumb indexing fix
-        q_partition = logsumexp(lqs)
-        qs = np.exp(lqs - q_partition)
-        q_tails = [qs[-1]]
-        for m in range(k-2, -1, -1):
-            q_tails.append(qs[m] + q_tails[-1])
-        q_tails.reverse()
-
-        print("our version (for all k):")
-        print(q.detach().numpy())
-        print("Jeffrey's compute_q_Elogstick (for k=2)")
-        print(qs)
-        import pdb; pdb.set_trace()
-
-        Elogstick = np.sum(qs * digamma2)
-        Elogstick += sum([digamma1[m] * q_tails[m+1] for m in range(k-1)])
-        Elogstick += -sum([digamma12[m] * q_tails[m] for m in range(k)])
-        Elogstick += - np.sum(qs * np.log(qs))
-
-        # return
-        return qs , Elogstick
+        return torch_e_logstick, q
 
     def _2_feature_assign(self, nu, tau):
         """
@@ -411,6 +340,34 @@ class InfiniteIBP(nn.Module):
 
         return constant + nonconstant
 
+    @staticmethod
+    def _entropy_q_v(tau):
+        # alternative, more manual approach
+        K = tau.shape[0]
+        entropy_q_v = 0
+        for k in range(K):
+            tau_1 = tau[k, 0]
+            tau_2 = tau[k, 1]
+            entropy_q_v += tau_1.lgamma() + tau_2.lgamma() - (tau_1 + tau_2).lgamma()
+            entropy_q_v -= ((tau_1 - 1) * digamma(tau_1) + (tau_2 - 1) * digamma(tau_2))
+            entropy_q_v += ((tau_1 + tau_2 - 2) * digamma(tau_1 + tau_2))
+        return entropy_q_v
+        # return ((tau.lgamma().sum(1) - tau.sum(1).lgamma()) - \
+        #     ((tau - 1.) * digamma(tau)) .sum(1) + \
+        #     ((tau.sum(1) - 2.) * digamma(tau.sum(1)))).sum()
+
+    @staticmethod
+    def _entropy_q_A(phi_var):
+        K, D, _ = phi_var.shape
+        entropy_q_A = 0
+        for k in range(K):
+            entropy_q_A += 0.5 * (D * (1 + LOG_2PI) + torch.logdet(phi_var[k])).sum()
+        return entropy_q_A
+
+    @staticmethod
+    def _entropy_q_z(nu):
+        return -(nu * (nu + EPS).log() + (1 - nu) * (1 - nu + EPS).log()).sum()
+
     def _5_entropy(self, tau, phi_var, nu):
         """
         @param tau: (K, 2)
@@ -421,22 +378,9 @@ class InfiniteIBP(nn.Module):
         Computes Entropy H[q] for all variational distributions q
         Same as Finite Approach, just rename entropy_q_pi to entropy_q_v.
         """
-        # entropy_q_v = ((tau.lgamma().sum(1) - tau.sum(1).lgamma()) - \
-            # ((tau - 1.) * digamma(tau)) .sum(1) + \
-            # ((tau.sum(1) - 2.) * digamma(tau.sum(1)))).sum()
-        entropy_q_v = 0
-        for k in range(self.K):
-            tau_1 = tau[k, 0]
-            tau_2 = tau[k, 1]
-            entropy_q_v += tau_1.lgamma() + tau_2.lgamma() - (tau_1 + tau_2).lgamma()
-            entropy_q_v -= ((tau_1 - 1) * digamma(tau_1) + (tau_2 - 1) * digamma(tau_2))
-            entropy_q_v += ((tau_1 + tau_2 - 2) * digamma(tau_1 + tau_2))
-        entropy_q_A = 0
-        for k in range(self.K):
-            entropy_q_A += 0.5 * (self.D * (1 + LOG_2PI) + torch.logdet(phi_var[k])).sum()
-        entropy_q_z = -(nu * (nu + EPS).log() + (1 - nu) * (1 - nu + EPS).log()).sum()
-        print(entropy_q_v.item() > 0, entropy_q_A.item() > 0, entropy_q_z.item() > 0)
-        return entropy_q_v + entropy_q_A + entropy_q_z
+        return self._entropy_q_v(tau) + \
+               self._entropy_q_A(phi_var) + \
+               self._entropy_q_z(nu)
 
     def cavi(self, X):
         """
@@ -470,8 +414,49 @@ class InfiniteIBP(nn.Module):
                 ((N - self.nu.sum(0)) * q[:, k+1:].sum(1))[k+1:].sum()
             self.tau[k][1] = 1 + ((N - self.nu.sum(0)) * q[:, k])[k:].sum()
 
+def test_q_E_logstick():
+    from scipy.special import digamma as dgm
+
+    K = 6
+    tau = 0.01 + nn.Softplus()(torch.randn(K, 2))
+
+    # compute, by hand, the distribution q_2
+    hand_q = np.zeros(2)
+    taud = tau.clone().detach().numpy()
+    hand_q[0] = dgm(taud[0, 1]) - dgm(taud[0, 1] + taud[0, 0])
+    hand_q[1] = dgm(taud[1, 1]) + dgm(taud[0, 0]) - \
+        (dgm(taud[0, 0] + taud[0, 1]) + dgm(taud[1, 0] + taud[1, 1]))
+    hand_q = np.exp(hand_q)
+    hand_q /= hand_q.sum()
+
+    _, q = InfiniteIBP._E_log_stick(None, tau, K)
+    assert np.abs((q[1, :2].numpy() - hand_q)).max() < 1e-6, "_E_log_stick doesn't compute q correctly"
+
+def test_negative_elbo():
+    model = InfiniteIBP(4., 6, 0.1, 0.5, 36)
+    model.init_z(10)
+    model.train()
+
+    X = torch.randn(10, 36)
+
+    a = model._1_feature_prob(model.tau).sum()
+    b = model._2_feature_assign(model.nu, model.tau).sum()
+    c = model._3_feature_prob(model.phi_var, model.phi).sum()
+    d = model._4_likelihood(X, model.nu, model.phi_var, model.phi).sum()
+    e = model._5_entropy(model.tau, model.phi_var, model.nu).sum()
+
+    entropy_q_v = InfiniteIBP._entropy_q_v(model.tau)
+    entropy_q_A = InfiniteIBP._entropy_q_A(model.phi_var)
+    entropy_q_z = InfiniteIBP._entropy_q_z(model.nu)
+
+    assert (a + entropy_q_v).item() >= 0, "KL q(pi) || p(pi) is negative"
+    assert (b + entropy_q_z).item() >= 0, "KL q(z) || p(z) is negative"
+    assert (c + entropy_q_A).item() >= 0, "KL q(A) || p(A) is negative"
+
+    assert (a + b + c + e).item() >= 0, "KL divergence between q(var) || p(var) is negative"
 
 def fit_infinite_to_ggblocks_cavi():
+    # TODO
     pass
 
 def fit_infinite_to_ggblocks_advi_exact():
@@ -503,4 +488,6 @@ if __name__ == '__main__':
     """
     python src/vi.py will just check that the model works on a ggblocks dataset
     """
-    fit_infinite_to_ggblocks_advi_exact()
+    # fit_infinite_to_ggblocks_advi_exact()
+    test_q_E_logstick()
+    test_negative_elbo()
