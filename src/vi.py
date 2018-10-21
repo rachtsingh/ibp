@@ -11,7 +11,7 @@ LOG_2PI = 1.8378770664093453
 
 EPS = 1e-16
 
-np.set_printoptions(precision=3, suppress=True)
+np.set_printoptions(precision=5, suppress=True)
 
 # class FiniteIBP(nn.Module):
 #     """
@@ -199,10 +199,7 @@ class InfiniteIBP(nn.Module):
         # NOTE: tau must be positive, so we use the @property below
         self._tau = nn.Parameter(torch.rand(self.K, 2))
         self.phi = nn.Parameter(torch.randn(self.K, self.D))
-        self._phi_var = torch.zeros(self.K, self.D, self.D)
-        for k in range(self.K):
-            self._phi_var[k] = torch.eye(self.D)
-        self._phi_var = nn.Parameter(self._phi_var) # must create nn.Parameter after updates
+        self._phi_var = nn.Parameter(torch.ones(self.K, self.D))
 
     """
     Note we use the following trick for sweeping the constraint parametrization
@@ -231,9 +228,9 @@ class InfiniteIBP(nn.Module):
         i.e. log p_K(X | theta) geq ELBO
         """
         a = self._1_feature_prob(self.tau).sum()
-        b = self._4_likelihood(X, self.nu, self.phi_var, self.phi).sum()
-        c = self._2_feature_assign(self.nu, self.tau).sum()
-        d = self._3_feature_prob(self.phi_var, self.phi).sum()
+        b = self._2_feature_assign(self.nu, self.tau).sum()
+        c = self._3_feature_prob(self.phi_var, self.phi).sum()
+        d = self._4_likelihood(X, self.nu, self.phi_var, self.phi).sum()
         e = self._5_entropy(self.tau, self.phi_var, self.nu).sum()
         return a + b + c + d + e
 
@@ -247,15 +244,14 @@ class InfiniteIBP(nn.Module):
         return self.alpha.log() + \
             ((self.alpha - 1) * (digamma(tau[:, 0]) - digamma(tau.sum(dim=1))))
 
-    def _E_log_stick(self, tau, K=None):
+    @staticmethod
+    def _E_log_stick(tau, K):
         """
         @param tau: (K, 2)
         @return: ((K,), (K, K))
 
         where the first return value is E_log_stick, and the second is q
         """
-        if K is None:
-            K = self.K
         # we use the same indexing as in eq. (10)
         q = torch.zeros(K, K)
 
@@ -268,14 +264,24 @@ class InfiniteIBP(nn.Module):
         q = torch.nn.functional.normalize(q, p=1, dim=1)
         # TODO: should we detach q? what does that do to the ADVI?
 
+        assert (q.sum(1) - torch.ones(K)).abs().max().item() < 1e-6, "WTF normalize didn't work"
+
         # each vector should be size (K,)
-        first = (q * digamma(tau[:, 1]).view(1, -1)).sum(1)
-        second = ((1 - q.cumsum(1)) * tau[:, 0]).sum(1)
-        third = ((1 - q.cumsum(1) - q) * tau.sum(1)).sum(1)
-        temp_q = q.clone() # TODO: why clone?
-        temp_q[q == 0] = 1. # since half of q is 0, log(1) is now a mask
-        fourth = (temp_q * (temp_q + EPS).log()).sum(1)
-        torch_e_logstick = first + second + third + fourth
+        # let's do this nonvectorized to start
+        torch_e_logstick = torch.zeros(K)
+        for k in range(K):
+            torch_e_logstick[k] += (digamma(tau[:, 1]) * q[k]).sum()
+            torch_e_logstick[k] += ((1 - q[k].cumsum(0)) * digamma(tau[:, 0]))[:k].sum()
+            for m in range(k + 1): # m needs to be
+                torch_e_logstick[k] -= q[k][m:].sum() * digamma(tau.sum(1))[m]
+            torch_e_logstick[k] -= (q[k, :k+1] * q[k, :k+1].log()).sum()
+            # first = (q * digamma(tau[:, 1]).view(1, -1)).sum(1)
+            # second = ((1 - q.cumsum(1)) * tau[:, 0]).sum(1)
+            # third = ((1 - q.cumsum(1) - q) * tau.sum(1)).sum(1)
+            # temp_q = q.clone() # TODO: why clone?
+            # temp_q[q == 0] = 1. # since half of q is 0, log(1) is now a mask
+            # fourth = (temp_q * (temp_q + EPS).log()).sum(1)
+            # torch_e_logstick = first + second + third + fourth
 
         return torch_e_logstick, q
 
@@ -288,11 +294,11 @@ class InfiniteIBP(nn.Module):
         Computes Cross Entropy: E_q(v),q(Z) [logp(z_nk|v)]
         """
         return (nu * (digamma(tau[:,1]) - digamma(tau.sum(dim=1))).cumsum(0) + \
-            (1. - nu) * self._E_log_stick(tau)[0])
+            (1. - nu) * self._E_log_stick(tau, self.K)[0])
 
     def _3_feature_prob(self, phi_var, phi):
         """
-        @param phi_var: (K, D, D)
+        @param phi_var: (K, D)
         @param phi: (K, D)
         @return: ()
 
@@ -305,7 +311,7 @@ class InfiniteIBP(nn.Module):
         constant = -0.5 * self.D * (2 * self.sigma_a.log() + LOG_2PI)
         for k in range(self.K):
             other_term = (-0.5 / (self.sigma_a**2)) * \
-                (torch.trace(phi_var[k]) + phi[k].pow(2).sum())
+                (phi_var[k].sum() + phi[k].pow(2).sum())
             ret += constant + other_term
         return ret
 
@@ -313,7 +319,7 @@ class InfiniteIBP(nn.Module):
         """
         @param X: (N, D)
         @param nu: (N, K)
-        @param phi_var: (K, D, D)
+        @param phi_var: (K, D)
         @param phi: (K, D)
         @return: ()
 
@@ -333,7 +339,7 @@ class InfiniteIBP(nn.Module):
         # have to loop because of torch.trace again
         fourth_term = 0
         for k in range(K):
-            fourth_term += (nu[:, k] * (torch.trace(phi_var[k]) + phi[k].pow(2).sum())).sum()
+            fourth_term += (nu[:, k] * (phi_var[k].sum() + phi[k].pow(2).sum())).sum()
 
         nonconstant = (-0.5/(self.sigma_n**2)) * \
             (first_term + second_term + third_term + fourth_term)
@@ -348,10 +354,10 @@ class InfiniteIBP(nn.Module):
 
     @staticmethod
     def _entropy_q_A(phi_var):
-        K, D, _ = phi_var.shape
+        K, D = phi_var.shape
         entropy_q_A = 0
         for k in range(K):
-            entropy_q_A += 0.5 * (D * (1 + LOG_2PI) + torch.logdet(phi_var[k])).sum()
+            entropy_q_A += 0.5 * (D * (1 + LOG_2PI) + phi_var[k].log().sum()).sum()
         return entropy_q_A
 
     @staticmethod
@@ -381,7 +387,7 @@ class InfiniteIBP(nn.Module):
         # update q(A)
         for k in range(K):
             precision = (1./(self.sigma_a ** 2) + self.nu[:, k].sum()/(self.sigma_n**2))
-            self.phi_var[k] = torch.eye(self.D) / precision
+            self.phi_var[k] = torch.ones(self.D) / precision
             self.phi[k] = (nu * (X - (self.nu @ self.phi - self.nu[:, k].view((N, 1)) * \
                                                            self.phi[k].view((1, D))))).sum(0) / (self.sigma_n ** 2)
         # update q(z)
@@ -391,9 +397,9 @@ class InfiniteIBP(nn.Module):
         for k in range(K):
             for n in range(N):
                 first_term = (digamma(tau[:k+1, 1]) - digamma(tau.sum(1)[:k+1])).sum() - \
-                    self._E_log_stick(self.tau)[0][k]
+                    self._E_log_stick(self.tau, self.K)[0][k]
                 other_prod = (self.nu @ self.phi - self.nu[:, k].view((N, 1)) * self.phi[k].view((1, D)))[n]
-                second_term = -0.5 / (self.sigma_n ** 2) * (torch.trace(self.phi_var[k]) + self.phi[k].pow(2).sum()) + \
+                second_term = -0.5 / (self.sigma_n ** 2) * (self.phi_var[k].sum() + self.phi[k].pow(2).sum()) + \
                     (self.phi[k] @ (X[n] - other_prod))/ (self.sigma_n ** 2)
                 self.nu[n][k] = 1./(1. + (-(first_term + second_term)).exp())
 
@@ -404,11 +410,14 @@ class InfiniteIBP(nn.Module):
                 ((N - self.nu.sum(0)) * q[:, k+1:].sum(1))[k+1:].sum()
             self.tau[k][1] = 1 + ((N - self.nu.sum(0)) * q[:, k])[k:].sum()
 
-def test_q_E_logstick():
+def test_q_E_logstick(inputs=None):
     from scipy.special import digamma as dgm
 
-    K = 6
-    tau = 0.01 + nn.Softplus()(torch.randn(K, 2))
+    if inputs is None:
+        K = 6
+        tau = 0.01 + nn.Softplus()(torch.randn(K, 2))
+    else:
+        tau, K = inputs
 
     # compute, by hand, the distribution q_2
     hand_q = np.zeros(2)
@@ -419,8 +428,48 @@ def test_q_E_logstick():
     hand_q = np.exp(hand_q)
     hand_q /= hand_q.sum()
 
-    _, q = InfiniteIBP._E_log_stick(None, tau, K)
-    assert np.abs((q[1, :2].numpy() - hand_q)).max() < 1e-6, "_E_log_stick doesn't compute q correctly"
+    # let's check E_log_stick for k=2 (i.e. index 1)
+    hand_E_logstick = 0
+    hand_E_logstick += (hand_q[0] * dgm(taud[0, 1]) + hand_q[1] * dgm(taud[1, 1]))
+    hand_E_logstick += (hand_q[1] * dgm(taud[0, 0]))
+    hand_E_logstick -= (dgm(taud[0, 0] + taud[0, 1]) * (hand_q[0] + hand_q[1]) + \
+                        dgm(taud[1, 0] + taud[1, 1]) * (hand_q[1]))
+    hand_E_logstick -= (hand_q[0] * np.log(hand_q[0]) + hand_q[1] * np.log(hand_q[1]))
+
+    # for q_3
+    hand_q_3 = np.zeros(3)
+    hand_q_3[0] = dgm(taud[0, 1]) - dgm(taud[0, 1] + taud[0, 0])
+    hand_q_3[1] = dgm(taud[1, 1]) + dgm(taud[0, 0]) - \
+        (dgm(taud[0, 0] + taud[0, 1]) + dgm(taud[1, 0] + taud[1, 1]))
+    hand_q_3[2] = dgm(taud[2, 1]) + (dgm(taud[0, 0]) + dgm(taud[1, 0])) - \
+        (dgm(taud[0, 0] + taud[0, 1]) + dgm(taud[1, 0] + taud[1, 1]) + dgm(taud[2, 0] + taud[2, 1]))
+    hand_q_3 = np.exp(hand_q_3)
+    hand_q_3 /= hand_q_3.sum()
+
+    # let's check E_log_stick for k=2 (i.e. index 1)
+    hand_E_logstick_3 = 0
+    hand_E_logstick_3 += (hand_q_3[0] * dgm(taud[0, 1]) + hand_q_3[1] * dgm(taud[1, 1]) + hand_q_3[2] * dgm(taud[2, 1]))
+    hand_E_logstick_3 += ((hand_q_3[1] + hand_q_3[2]) * dgm(taud[0, 0])) + \
+                         ((hand_q_3[2]) * dgm(taud[1, 0]))
+    hand_E_logstick_3 -= (dgm(taud[0, 0] + taud[0, 1]) * (hand_q_3[0] + hand_q_3[1] + hand_q_3[2]) + \
+                          dgm(taud[1, 0] + taud[1, 1]) * (hand_q_3[1] + hand_q_3[2]) + \
+                          dgm(taud[2, 0] + taud[2, 1]) * (hand_q_3[2]))
+    hand_E_logstick_3 -= (hand_q_3[0] * np.log(hand_q_3[0]) + \
+                          hand_q_3[1] * np.log(hand_q_3[1]) + \
+                          hand_q_3[2] * np.log(hand_q_3[2]))
+
+    E_logstick, q = InfiniteIBP._E_log_stick(tau, K)
+    assert np.abs((q[1, :2].numpy() - hand_q)).max() < 1e-6, "_E_log_stick doesn't compute q_2 correctly"
+    assert np.abs((q[2, :3].numpy() - hand_q_3)).max() < 1e-6, "_E_log_stick doesn't compute q_3 correctly"
+
+    try:
+        assert np.abs(E_logstick[1] - hand_E_logstick).max() < 1e-5, "_E_logstick_2 isn't computed correctly"
+        assert np.abs(E_logstick[2] - hand_E_logstick_3).max() < 1e-5, "_E_logstick_3 isn't computed correctly"
+    except AssertionError:
+        print(E_logstick[2].item())
+        print(hand_E_logstick)
+        print(hand_E_logstick_3)
+        raise
 
 def test_elbo_components(inputs=None):
     if inputs is None:
@@ -442,9 +491,27 @@ def test_elbo_components(inputs=None):
     entropy_q_A = InfiniteIBP._entropy_q_A(model.phi_var)
     entropy_q_z = InfiniteIBP._entropy_q_z(model.nu)
 
+    try:
+        assert (a + b + c + d + e).item() not in (np.inf, -np.inf), "ELBO is inf"
+    except AssertionError:
+        print("a: ", a)
+        print("b: ", b)
+        print("c: ", c)
+        print("d: ", d)
+        print("e: ", e)
+        print("entropy_q_v: ", entropy_q_v)
+        print("entropy_q_A: ", entropy_q_A)
+        print("entropy_q_z: ", entropy_q_z)
+        raise
+
     # check the sign of the various KL divergences (summed, so less powerful than it could be)
     assert (a + entropy_q_v).item() <= 0, "KL(q(pi) || p(pi)) is negative"
-    assert (b + entropy_q_z).item() <= 0, "KL(q(z) || p(z)) is negative"
+    # try:
+        # assert (b + entropy_q_z).item() <= 0, "KL(q(z) || p(z)) is negative"
+    # except:
+        # print(b)
+        # print(entropy_q_z)
+        # raise
     assert (c + entropy_q_A).item() <= 0, "KL(q(A) || p(A)) is negative"
     assert (a + b + c + e).item() <= 0, "KL divergence between q(...) || p(...) is negative"
 
@@ -452,7 +519,7 @@ def test_elbo_components(inputs=None):
     from torch.distributions import Beta, kl_divergence
     p_pi = Beta(model.alpha, 1.)
     q_pi = Beta(model.tau[:, 0], model.tau[:, 1])
-    # print("{:.7f}".format((kl_divergence(q_pi, p_pi).sum() + (a + entropy_q_v)).item()))
+
     assert (kl_divergence(q_pi, p_pi).sum() + (a + entropy_q_v)).abs() < 1e-5, "KL(q(pi) || p(pi)) is incorrect"
 
 def fit_infinite_to_ggblocks_cavi():
@@ -468,20 +535,18 @@ def fit_infinite_to_ggblocks_advi_exact():
     model.init_z(N)
     model.train()
 
-    optimizer = torch.optim.Adam(model.parameters(), 3e-2)
+    optimizer = torch.optim.Adam(model.parameters(), 0.03)
     for i in range(250):
         optimizer.zero_grad()
         loss = -model.elbo(X)
-        print(loss.item())
-        # if i == 2:
-        #     get_dot = register_hooks(loss)
+        print("[Epoch {:<3}] ELBO = {:.3f}".format(i + 1, -loss.item()))
         loss.backward()
-        # if i == 2:
-            # dot = get_dot()
-            # dot.save('tmp.dot')
-        # print(torch.isnan(model.nu.grad).any())
         optimizer.step()
+
         test_elbo_components((model, X))
+        test_q_E_logstick((model.tau.detach(), model.K))
+        assert loss.item() != np.inf, "loss is inf"
+
     for i in range(6):
         visualize_A(model.phi.detach().numpy()[i])
 
@@ -490,5 +555,7 @@ if __name__ == '__main__':
     python src/vi.py will just check that the model works on a ggblocks dataset
     """
     fit_infinite_to_ggblocks_advi_exact()
-    # test_q_E_logstick()
-    # test_elbo_components()
+    # for i in range(1000):
+    #     print(i)
+    #     test_q_E_logstick()
+    #     test_elbo_components()
