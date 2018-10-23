@@ -4,7 +4,7 @@ from torch import nn
 from torch import digamma
 from torch.distributions import MultivariateNormal as MVN
 from torch.distributions import Bernoulli as Bern
-from .utils import register_hooks, visualize_A
+from utils import register_hooks, visualize_A
 
 LOG_2PI = 1.8378770664093453
 EPS = 1e-16
@@ -50,6 +50,9 @@ class InfiniteIBP(nn.Module):
         self.phi = nn.Parameter(torch.randn(self.K, self.D))
         self._phi_var = nn.Parameter(torch.ones(self.K, self.D))
 
+    def init_z(self, N=100):
+        self._nu = nn.Parameter(torch.rand(N, self.K))
+
     """
     Note we use the following trick for sweeping the constraint parametrization
     'under the rug' so to speak - whenever we access self.tau, we get the
@@ -67,9 +70,6 @@ class InfiniteIBP(nn.Module):
     @property
     def phi_var(self):
         return nn.Softplus()(self._phi_var)
-
-    def init_z(self, N=100):
-        self._nu = nn.Parameter(torch.rand(N, self.K))
 
     def elbo(self, X):
         """
@@ -235,14 +235,10 @@ class InfiniteIBP(nn.Module):
         There are so many dumb terms in this
         """
         N, K, D = X.shape[0], self.K, self.D
-        # update q(A)
         for k in range(K):
             precision = (1./(self.sigma_a ** 2) + self.nu[:, k].sum()/(self.sigma_n**2))
             self.phi_var[k] = torch.ones(self.D) / precision
-            s = 0
-            # this can definitely be parallelized - it's probably really slow right now
-            for n in range(N):
-                s += self.nu[n][k] * (X[n] - (self.nu[n] @ self.phi - self.phi[k]))
+            s = (self.nu[:, k].view(N, 1) * (X - (self.nu @ self.phi - torch.ger(self.nu[:, k], self.phi[k])))).sum(0)
             self.phi[k] = s/((self.sigma_n ** 2) * precision)
 
         # update q(z)
@@ -272,33 +268,34 @@ Inference runners
 
 def fit_infinite_to_ggblocks_cavi():
     from data import generate_gg_blocks, generate_gg_blocks_dataset
+    from tests.test_vi import test_elbo_components, test_q_E_logstick
+
     N = 500
-    X = generate_gg_blocks(N)
+    X = generate_gg_blocks_dataset(N, 0.5)
 
     model = InfiniteIBP(4., 6, 0.1, 0.5, 36)
     model.init_z(N)
-    model.train()
 
-    for i in range(10):
+    for i in range(25):
         model.cavi(X)
         print("[Epoch {:<3}] ELBO = {:.3f}".format(i + 1, model.elbo(X).item()))
 
-    for i in range(6):
-        visualize_A(model.phi.detach().numpy()[i])
+    visualize_A(model.phi.detach().numpy())
 
 def fit_infinite_to_ggblocks_advi_exact():
     # used to debug infs
     from tests.test_vi import test_elbo_components, test_q_E_logstick
     from data import generate_gg_blocks, generate_gg_blocks_dataset
+
     N = 500
-    X = generate_gg_blocks(N)
+    X = generate_gg_blocks_dataset(N, 0.5)
 
     model = InfiniteIBP(4., 6, 0.1, 0.5, 36)
     model.init_z(N)
     model.train()
 
     optimizer = torch.optim.Adam(model.parameters(), 0.03)
-    for i in range(250):
+    for i in range(500):
         optimizer.zero_grad()
         loss = -model.elbo(X)
         print("[Epoch {:<3}] ELBO = {:.3f}".format(i + 1, -loss.item()))
@@ -309,8 +306,7 @@ def fit_infinite_to_ggblocks_advi_exact():
         test_q_E_logstick((model.tau.detach(), model.K))
         assert loss.item() != np.inf, "loss is inf"
 
-    for i in range(6):
-        visualize_A(model.phi.detach().numpy()[i])
+    visualize_A(model.phi.detach().numpy())
 
 if __name__ == '__main__':
     """

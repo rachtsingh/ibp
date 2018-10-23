@@ -1,11 +1,17 @@
 from graphviz import Digraph
 import torch
+import numpy as np
 from torch.autograd import Variable, Function
 
 def visualize_A(A):
-    # TODO: augment to show all 6 learned A things
+    """
+    Assume that A can be reshaped into 6 (6, 6) images
+    """
     from matplotlib import pyplot as plt
-    plt.imshow(A.reshape(6, 6), interpolation=None, cmap='gray')
+    from matplotlib.pyplot import subplots
+    fig, axes = subplots(3, 2)
+    for i, ax in enumerate(axes.reshape(-1)):
+        ax.imshow(A.reshape(6, 6, 6)[i], interpolation=None, cmap='gray')
     plt.show()
 
 def iter_graph(root, callback):
