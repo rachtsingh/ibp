@@ -5,7 +5,7 @@ from torch.autograd import Variable, Function
 def visualize_A(A):
     # TODO: augment to show all 6 learned A things
     from matplotlib import pyplot as plt
-    plt.imshow(A.reshape(6, 6))
+    plt.imshow(A.reshape(6, 6), interpolation=None, cmap='gray')
     plt.show()
 
 def iter_graph(root, callback):
