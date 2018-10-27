@@ -30,7 +30,12 @@ def generate_gg_blocks(N):
     This function doesn't sample points from the IBP: it uses a Bernoulli
     distribution for Z
     """
+
+    # we have to make sure there's at least one feature in each sample
     Z = Bernoulli(0.25).sample((N, 4))
+    while (Z.sum(1) == 0).any():
+        msk = (Z.sum(1) == 0)
+        Z[msk] = Bernoulli(0.25).sample((msk.sum().item(), 4))
     A = gg_blocks()
     return Z @ A
 
