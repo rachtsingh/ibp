@@ -134,8 +134,25 @@ def test_elbo_components(inputs=None):
     except:
         import ipdb; ipdb.set_trace()
 
-def test_cavi_updates_are_correct():
-    pass
+def test_cavi_updates_are_correct(inputs=None):
+    # after doing the CAVI update for a single variable, we would expect that dELBO/dv is about 0.
+    if inputs is None:
+        model = InfiniteIBP(4., 6, 0.1, 0.5, 36)
+        model.init_z(10)
+        model.train()
+
+        X = torch.randn(10, 36)
+    else:
+        model, X = inputs
+
+    # test that the updates for phi[2] is about right:
+    k = 2
+
+    # CAVI update for phi[2]
+    precision = (1./(model.sigma_a ** 2) + model.nu[:, k].sum()/(model.sigma_n**2))
+    model.phi_var[k] = torch.ones(model.D) / precision
+    s = (model.nu[:, k].view(N, 1) * (X - (model.nu @ model.phi - torch.ger(model.nu[:, k], model.phi[k])))).sum(0)
+    model.phi[k] = s/((model.sigma_n ** 2) * precision)
 
 def test_vectorized_cavi():
     model = InfiniteIBP(4., 6, 0.1, 0.5, 36)

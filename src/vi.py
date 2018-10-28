@@ -6,7 +6,7 @@ from torch.distributions import MultivariateNormal as MVN
 from torch.distributions import Bernoulli as Bern
 
 from .utils import register_hooks, visualize_A
-from .data import generate_gg_blocks, generate_gg_blocks_dataset
+from .data import generate_gg_blocks, generate_gg_blocks_dataset, gg_blocks
 
 
 LOG_2PI = 1.8378770664093453
@@ -50,8 +50,8 @@ class InfiniteIBP(nn.Module):
     def init_variables(self, N=100):
         # NOTE: tau must be positive, so we use the @property below
         self._tau = nn.Parameter(torch.rand(self.K, 2))
-        self.phi = nn.Parameter(torch.randn(self.K, self.D))
-        self._phi_var = nn.Parameter(torch.ones(self.K, self.D))
+        self.phi = nn.Parameter(torch.randn(self.K, self.D) * self.sigma_a)
+        self._phi_var = nn.Parameter(torch.zeros(self.K, self.D) - 2.)
 
     def init_z(self, N=100):
         self._nu = nn.Parameter(torch.rand(N, self.K))
@@ -288,17 +288,21 @@ def fit_infinite_to_ggblocks_advi_exact():
     # used to debug infs
     from tests.test_vi import test_elbo_components, test_q_E_logstick
 
+    SCALE = 1.
+
     N = 500
     X = generate_gg_blocks_dataset(N, 0.05)
 
     # for i in range(10):
-    model = InfiniteIBP(2., 6, 0.01, 0.1, 36)
+    model = InfiniteIBP(1.5, 6, 0.1, 0.5, 36)
+    model.phi.data[:4] = SCALE * gg_blocks()
+    visualize_A(model.phi.detach().numpy())
     model.init_z(N)
     model.train()
 
-    optimizer = torch.optim.Adam(model.parameters(), 0.003)
+    optimizer = torch.optim.Adam(model.parameters(), 0.01)
 
-    # plots = np.zeros((1000, 6, 36))
+    plots = np.zeros((1000, 6, 36))
 
     for i in range(1000):
         optimizer.zero_grad()
@@ -309,11 +313,12 @@ def fit_infinite_to_ggblocks_advi_exact():
 
         # test_elbo_components((model, X))
         # test_q_E_logstick((model.tau.detach(), model.K))
-        # plots[i] = model.phi.detach().numpy().reshape((6, 36))
+        plots[i] = model.phi.detach().numpy().reshape((6, 36))
         assert loss.item() != np.inf, "loss is inf"
 
-    # np.save('features.npy', plots)
-    visualize_A(model.phi.detach().numpy())
+    np.save('features.npy', plots)
+    # visualize_A(model.phi.detach().numpy())
+    # import ipdb; ipdb.set_trace()
 
 if __name__ == '__main__':
     """

@@ -2,13 +2,14 @@ from graphviz import Digraph
 import torch
 import numpy as np
 from torch.autograd import Variable, Function
+from matplotlib import pyplot as plt
+from matplotlib.pyplot import subplots
+import seaborn as sns
 
 def visualize_A(A):
     """
     Assume that A can be reshaped into 6 (6, 6) images
     """
-    from matplotlib import pyplot as plt
-    from matplotlib.pyplot import subplots
     a, b = A.min(), A.max()
     fig, axes = subplots(3, 2)
     for i, ax in enumerate(axes.reshape(-1)):
@@ -18,6 +19,22 @@ def visualize_A(A):
         ax.set_yticks([])
     fig.colorbar(im, ax=axes.ravel().tolist(), shrink=0.5)
     plt.show()
+
+def visualize_A_save(A, iter):
+    a, b = A.min(), A.max()
+    fig, axes = subplots(3, 2)
+    for i, ax in enumerate(axes.reshape(-1)):
+        im = ax.imshow(A.reshape(6, 6, 6)[i], interpolation=None, cmap='gray', vmin=a, vmax=b)
+        ax.set_title(str(i + 1))
+        ax.set_xticks([])
+        ax.set_yticks([])
+    fig.colorbar(im, ax=axes.ravel().tolist(), shrink=0.5)
+    plt.savefig("features_{}.png".format(iter), dpi=300)
+
+def visualize_nu_save(nu, iter):
+    plt.figure()
+    sns.distplot(nu.reshape((-1,)), kde=False)
+    plt.savefig("nu_{}.png".format(iter), dpi=300)
 
 def iter_graph(root, callback):
     queue = [root]
