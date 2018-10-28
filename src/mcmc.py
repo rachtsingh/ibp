@@ -318,36 +318,49 @@ class UncollapsedGibbsIBP(nn.Module):
         Z = self.init_Z(N)
         A = self.init_A(K,D)
         As = []
+        Zs = []
         for iteration in range(iters):
             print('iter:',iteration)
             A = self.resample_A(X,Z)
             Z,A = self.resample_Z(X,Z,A)
             Z,A = self.trim_ZA(Z,A)
             A_numpy = A.clone().numpy()
+            Z_numpy = Z.clone().numpy()
             As.append(A_numpy)
-        return As
+            Zs.append(Z_numpy)
+            print("Z shape is",Z.size())
+        return As,Zs
 
 
-def plot_numpy_A(A_to_view):
-    _K,_D = A_to_view.shape
+def plot_numpy_A(A,Z,iteration):
+
+    a, b = A.min(), A.max()
+    K,D = A.shape
+
     from matplotlib import pyplot as plt
     from matplotlib.pyplot import subplots
-    fig, axes = subplots(1, _K)
+    fig, axes = subplots(1, K)
     for i, ax in enumerate(axes.reshape(-1)):
-        ax.imshow(A_to_view.reshape(-1, 6, 6)[i], interpolation=None, cmap='gray')
-    plt.show()
+        count = Z[:,i].sum()
+        im=plt.imshow(A.reshape(-1, 6, 6)[i], interpolation=None, cmap='gray', vmin=a, vmax=b)
+        fig.colorbar(im, ax=axes.ravel().tolist(), shrink=0.5)
+        ax.set_title(str(int(count)))
+        ax.set_xticks([])
+        ax.set_yticks([])
+        plt.savefig("iter_{}_feat_{}.png".format(iteration,i), dpi=300)
 
 def fit_ugibbs_to_ggblocks():
     from data import generate_gg_blocks, generate_gg_blocks_dataset
     N = 100
-    X = generate_gg_blocks_dataset(N, 0.05)
+    X = generate_gg_blocks_dataset(N, 0.1)
     K = 6
-    model = UncollapsedGibbsIBP(4., K, 0.1, 0.5, 36) # these are bad parameters
+    model = UncollapsedGibbsIBP(4., K, 0.1, 0.1, 36) # these are bad parameters
     model.train()
 
-    As = model.gibbs(X,iters=50)
-    for i in range(len(As)):
-        plot_numpy_A(As[i])
+    As,Zs = model.gibbs(X,iters=5)
+    for i in range(0,len(As)):
+        print("SUM OF Z",Zs[i].sum())
+        plot_numpy_A(As[i],Zs[i],i)
 
 if __name__ == '__main__':
     """
