@@ -4,7 +4,10 @@ from torch import nn
 from torch import digamma
 from torch.distributions import MultivariateNormal as MVN
 from torch.distributions import Bernoulli as Bern
-from utils import register_hooks, visualize_A
+
+from .utils import register_hooks, visualize_A
+from .data import generate_gg_blocks, generate_gg_blocks_dataset
+
 
 LOG_2PI = 1.8378770664093453
 EPS = 1e-16
@@ -61,7 +64,7 @@ class InfiniteIBP(nn.Module):
 
     @property
     def tau(self):
-        return 1. + nn.Softplus()(self._tau)
+        return 0.5   + nn.Softplus()(self._tau)
 
     @property
     def nu(self):
@@ -267,16 +270,15 @@ Inference runners
 """
 
 def fit_infinite_to_ggblocks_cavi():
-    from data import generate_gg_blocks, generate_gg_blocks_dataset
     from tests.test_vi import test_elbo_components, test_q_E_logstick
 
     N = 500
-    X = generate_gg_blocks_dataset(N, 0.5)
+    X = generate_gg_blocks_dataset(N, 0.05)
 
-    model = InfiniteIBP(4., 6, 0.1, 0.5, 36)
+    model = InfiniteIBP(4., 6, 0.05, 0.05, 36)
     model.init_z(N)
 
-    for i in range(25):
+    for i in range(10):
         model.cavi(X)
         print("[Epoch {:<3}] ELBO = {:.3f}".format(i + 1, model.elbo(X).item()))
 
@@ -285,32 +287,37 @@ def fit_infinite_to_ggblocks_cavi():
 def fit_infinite_to_ggblocks_advi_exact():
     # used to debug infs
     from tests.test_vi import test_elbo_components, test_q_E_logstick
-    from data import generate_gg_blocks, generate_gg_blocks_dataset
 
     N = 500
-    X = generate_gg_blocks_dataset(N, 0.5)
+    X = generate_gg_blocks_dataset(N, 0.05)
 
-    model = InfiniteIBP(4., 6, 0.1, 0.5, 36)
+    # for i in range(10):
+    model = InfiniteIBP(2., 6, 0.01, 0.1, 36)
     model.init_z(N)
     model.train()
 
-    optimizer = torch.optim.Adam(model.parameters(), 0.03)
-    for i in range(500):
+    optimizer = torch.optim.Adam(model.parameters(), 0.003)
+
+    # plots = np.zeros((1000, 6, 36))
+
+    for i in range(1000):
         optimizer.zero_grad()
         loss = -model.elbo(X)
         print("[Epoch {:<3}] ELBO = {:.3f}".format(i + 1, -loss.item()))
         loss.backward()
         optimizer.step()
 
-        test_elbo_components((model, X))
-        test_q_E_logstick((model.tau.detach(), model.K))
+        # test_elbo_components((model, X))
+        # test_q_E_logstick((model.tau.detach(), model.K))
+        # plots[i] = model.phi.detach().numpy().reshape((6, 36))
         assert loss.item() != np.inf, "loss is inf"
 
+    # np.save('features.npy', plots)
     visualize_A(model.phi.detach().numpy())
 
 if __name__ == '__main__':
     """
     python src/vi.py will just check that the model works on a ggblocks dataset
     """
-    fit_infinite_to_ggblocks_cavi()
-    # fit_infinite_to_ggblocks_advi_exact()
+    # fit_infinite_to_ggblocks_cavi()
+    fit_infinite_to_ggblocks_advi_exact()

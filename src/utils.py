@@ -9,9 +9,14 @@ def visualize_A(A):
     """
     from matplotlib import pyplot as plt
     from matplotlib.pyplot import subplots
+    a, b = A.min(), A.max()
     fig, axes = subplots(3, 2)
     for i, ax in enumerate(axes.reshape(-1)):
-        ax.imshow(A.reshape(6, 6, 6)[i], interpolation=None, cmap='gray')
+        im = ax.imshow(A.reshape(6, 6, 6)[i], interpolation=None, cmap='gray', vmin=a, vmax=b)
+        ax.set_title(str(i + 1))
+        ax.set_xticks([])
+        ax.set_yticks([])
+    fig.colorbar(im, ax=axes.ravel().tolist(), shrink=0.5)
     plt.show()
 
 def iter_graph(root, callback):

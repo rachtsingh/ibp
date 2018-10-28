@@ -20,6 +20,12 @@ def generate_ibp(N, alpha):
     """
     beta = Beta(torch.tensor(alpha), 1.).sample()
 
+def sample_Z(N):
+    Z = Bernoulli(0.25).sample((N, 4))
+    while (Z.sum(1) == 0).any():
+        msk = (Z.sum(1) == 0)
+        Z[msk] = Bernoulli(0.25).sample((msk.sum().item(), 4))
+    return Z
 
 def generate_gg_blocks(N):
     """
