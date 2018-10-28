@@ -196,7 +196,7 @@ class UncollapsedGibbsIBP(nn.Module):
         for i in range(N):
             for k in range(K):
                 Z[i,k] = self.resample_Zik(X,Z,A,i,k)
-            truncation=100
+            truncation=20
             k_new = self.k_new(X,Z,A,i,truncation)
             if k_new > 0:
                 Z = torch.cat((Z,torch.zeros(N,k_new)),1)
@@ -273,13 +273,13 @@ class UncollapsedGibbsIBP(nn.Module):
         return A
 
     def left_order_form(self,Z):
-        Z_numpy = Z.clone()
+        Z_numpy = Z.clone().numpy()
         twos = np.ones(Z_numpy.shape[0])*2.0
         twos[0] = 1.0
         powers = np.cumprod(twos)[::-1]
         values = np.dot(powers,Z_numpy)
         idx = values.argsort()[::-1]
-        return torch.tensor(np.take(Z_numpy,idx,axis=1))
+        return torch.from_numpy(np.take(Z_numpy,idx,axis=1))
 
     def init_Z(self,N=20):
         '''
@@ -309,7 +309,6 @@ class UncollapsedGibbsIBP(nn.Module):
         N,K = Z.size()
         sums = Z.sum(dim=0)
         to_keep = sums > 0
-        print("to keep",to_keep)
         return Z[:,to_keep],A[to_keep,:]
 
     def gibbs(self, X, iters):
@@ -324,20 +323,31 @@ class UncollapsedGibbsIBP(nn.Module):
             A = self.resample_A(X,Z)
             Z,A = self.resample_Z(X,Z,A)
             Z,A = self.trim_ZA(Z,A)
-            As.append(A.clone().view(-1, 6, 6).detach().numpy()[0])
+            A_numpy = A.clone().numpy()
+            As.append(A_numpy)
         return As
+
+
+def plot_numpy_A(A_to_view):
+    _K,_D = A_to_view.shape
+    from matplotlib import pyplot as plt
+    from matplotlib.pyplot import subplots
+    fig, axes = subplots(1, _K)
+    for i, ax in enumerate(axes.reshape(-1)):
+        ax.imshow(A_to_view.reshape(-1, 6, 6)[i], interpolation=None, cmap='gray')
+    plt.show()
 
 def fit_ugibbs_to_ggblocks():
     from data import generate_gg_blocks, generate_gg_blocks_dataset
     N = 100
-    X = generate_gg_blocks_dataset(N, 0.5)
+    X = generate_gg_blocks_dataset(N, 0.05)
     K = 6
     model = UncollapsedGibbsIBP(4., K, 0.1, 0.5, 36) # these are bad parameters
     model.train()
 
-    last_sample_A = model.gibbs(X, iters=50)
-    for i in range(50):
-        visualize_A(As[i])
+    As = model.gibbs(X,iters=2)
+    for i in range(len(As)):
+        plot_numpy_A(As[i])
 
 if __name__ == '__main__':
     """
