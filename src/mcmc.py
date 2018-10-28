@@ -345,7 +345,7 @@ def fit_ugibbs_to_ggblocks():
     model = UncollapsedGibbsIBP(4., K, 0.1, 0.5, 36) # these are bad parameters
     model.train()
 
-    As = model.gibbs(X,iters=2)
+    As = model.gibbs(X,iters=50)
     for i in range(len(As)):
         plot_numpy_A(As[i])
 
