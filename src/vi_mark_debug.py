@@ -120,6 +120,12 @@ class InfiniteIBP(nn.Module):
         q += (first_term + second_term - third_term).view(1, -1)
         q = torch.tril(q.exp())
         q = torch.nn.functional.normalize(q, p=1, dim=1)
+
+
+        if (q<0).sum():
+            print("q in logstick has negatives")
+            import ipdb; ipdb.set_trace()
+
         # TODO: should we detach q? what does that do to the ADVI?
 
         assert (q.sum(1) - torch.ones(K)).abs().max().item() < 1e-6, "WTF normalize didn't work"
@@ -136,6 +142,9 @@ class InfiniteIBP(nn.Module):
             for m in range(k + 1): # m needs to be
                 torch_e_logstick[k] -= q[k][m:].sum() * digamma(tau.sum(1))[m]
             
+            '''
+            the q[k,k+1].log() term nans in the very last entry when running spectrogram.py, many iterations into training
+            '''
             torch_e_logstick[k] -= (q[k, :k+1] * q[k, :k+1].log()).sum()
             
             if torch.isnan(torch_e_logstick).sum():
