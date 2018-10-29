@@ -128,7 +128,7 @@ class InfiniteIBP(nn.Module):
             torch_e_logstick[k] += ((1 - q[k].cumsum(0)) * digamma(tau[:, 0]))[:k].sum()
             for m in range(k + 1): # m needs to be
                 torch_e_logstick[k] -= q[k][m:].sum() * digamma(tau.sum(1))[m]
-            torch_e_logstick[k] -= (q[k, :k+1] * q[k, :k+1].log()).sum()
+            torch_e_logstick[k] -= (q[k, :k+1] * (q[k, :k+1] + EPS).log()).sum()
             # first = (q * digamma(tau[:, 1]).view(1, -1)).sum(1)
             # second = ((1 - q.cumsum(1)) * tau[:, 0]).sum(1)
             # third = ((1 - q.cumsum(1) - q) * tau.sum(1)).sum(1)
