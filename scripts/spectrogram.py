@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.abspath('..'))
 
 
 # inside-package imports below here
-from src.vi import InfiniteIBP
+from src.vi_mark_debug import InfiniteIBP
 from src.utils import register_hooks, visualize_A, visualize_A_save, visualize_nu_save
 from src.data import generate_gg_blocks, generate_gg_blocks_dataset, gg_blocks
 
@@ -59,7 +59,7 @@ def infer_music():
     # Should increase the number of times nu is reset,
     # but make sure not to reset it to close to when you stop doing inference
     for j in range(8):
-        for i in range(100):
+        for i in range(50):
             optimizer.zero_grad()
             loss = -model.elbo(X)
             print("[Epoch {:<3}] ELBO = {:.3f}".format(i + 1, -loss.item()))
