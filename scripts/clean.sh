@@ -1,0 +1,2 @@
+rm features*
+rm nu*
