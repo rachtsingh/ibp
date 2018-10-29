@@ -23,6 +23,13 @@ import numpy as np
 
 def infer_music():
 
+    # pip install librosa
+    # Load the audio data
+    # Compute the Spectrogram. N is time points. D is frequencies.
+    # It is DxN by default, so we transpose.
+    # We will do factorization for the magnitudes np.abs(spectrogram)
+    # We will need the phase np.angle(spectrogram) to resynthesize to audio
+    # Only keep first 500 time windows for now. To increase data size, keep all timesteps
     y,sr = librosa.load('bach.wav')
     true_spec = librosa.stft(y,n_fft=2048)
     true_mag = np.abs(true_spec)
@@ -33,6 +40,11 @@ def infer_music():
     X=torch.from_numpy(true_mag)
     N,D = X.size()
     print("{} timepoints, {} frequencies".format(N,D))
+    
+    # Don't know how many latents to do.
+    # Should be one for each frequency we hope to find,
+    # but can be less to find groups of frequencies.
+    # Using 30 for now
     model = InfiniteIBP(1.5, 30, 0.1, 0.05, D)
     model.init_z(N)
     model.train()
@@ -42,6 +54,10 @@ def infer_music():
 
     elbo_array = []
     iter_count = 0
+    
+    # Should increase j range and i range
+    # Should increase the number of times nu is reset,
+    # but make sure not to reset it to close to when you stop doing inference
     for j in range(8):
         for i in range(100):
             optimizer.zero_grad()
@@ -62,8 +78,14 @@ def infer_music():
 
     plt.plot(np.arange(len(elbo_array)), np.array(elbo_array))
     plt.show()
-    
-    
+
+    # Sample some assignments
+    # Take the mean of the features
+    # Recover the data, clip numbers below 0 because magnitude can't be negative
+    # Recover real and imaginary part of spectrogram from recovered magnitude and true phase
+    # Recover spectrogram from recovered real and imaginary parts.
+    # Resynthesize audio with istft
+    # When done, listen to bach_reconstruct.wav
     p_Z = Bern(model.nu.clone()) 
     Z = p_Z.sample()
     A = model.phi.clone().detach()
