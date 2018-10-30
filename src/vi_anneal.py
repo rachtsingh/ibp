@@ -54,9 +54,10 @@ class InfiniteIBP(nn.Module):
         self._phi_var = nn.Parameter(torch.zeros(self.K, self.D) - 2.)
 
     # For Variational Tempering
-    def init_r(self,N,M):
+    def init_r_and_T(self,N,M):
         self.M = M
         self._r = nn.Parameter(torch.rand(N,self.M))
+        self.T = torch.arange(1,self.M+1.0)
 
     def init_z(self, N=100):
         self._nu = nn.Parameter(torch.rand(N, self.K))
@@ -96,86 +97,21 @@ class InfiniteIBP(nn.Module):
         return a + b + c + d + e
     
 
-    '''
-    TODO IMPLEMENT PER DATAPOINT ELBO
-    '''
-    def likelihood_single(self, X, nu, phi_var, phi,i):
-        """
-        @param X: (N, D)
-        @param nu: (N, K)
-        @param phi_var: (K, D)
-        @param phi: (K, D)
-        @return: ()
-
-        Computes Likelihood: E_q(Z),q(A) [logp(X_n|Z_n,A,sigma_n^2 I)]
-        Same as Finite Approach
-        """
-        
-        N, _ = X.shape
-        K, D = self.K, self.D # for notational simplicity
-        iret = 0
-        
-        constant = -0.5 * D * (self.sigma_n.log() + LOG_2PI)
-        first_term = X[i].pow(2).sum()
-        
-        second_term = 0.0
-        for k in range(self.K):
-            nu_ik = nu[i,k]
-            phi_k = phi[k].unsqueeze(0)
-            X_i_T = X[i].unsqueeze(1)
-            second_term += (phi_k@X_i_T)
-        second_term = -2.0*second_term
-
-        nu_local = torch.zeros(N,self.K)
-        nu_local[i] += nu[i]
-        third_term = 2 * torch.triu((phi @ phi.transpose(0, 1)) * \
-                (nu_local.transpose(0, 1) @ nu_local), diagonal=1).sum()
-
-        # have to loop because of torch.trace again
-        fourth_term = 0
-        for k in range(K):
-            fourth_term += (nu_local[:, k] * (phi_var[k].sum() + phi[k].pow(2).sum())).sum()
-
-        nonconstant = (-0.5/(self.sigma_n**2)) * \
-            (first_term + second_term + third_term + fourth_term)
-
-        return constant + nonconstant
-
-
-    def elbo_sum_single(self,X):
+    def elbo_tempered(self, X):
         """
         This is the evidence lower bound evaluated at X, when X is of shape (N, D)
         i.e. log p_K(X | theta) geq ELBO
         """
-        a = self._1_feature_prob(self.tau).sum()
-        b = self._2_feature_assign(self.nu, self.tau).sum()
-        c = self._3_feature_prob(self.phi_var, self.phi).sum()
-        
-        d = 0.0
-        for i in range(X.size()[0]):
-            d += self.likelihood_single(X,self.nu,self.phi_var,self.phi,i)
-        e = self._5_entropy(self.tau, self.phi_var, self.nu).sum()
-        return a + b + c + d + e
-    
-    def elbo_tempered(self, X, T):
-        """
-        This is the evidence lower bound evaluated at X, when X is of shape (N, D)
-        i.e. log p_K(X | theta) geq ELBO
-        """
-        probs = torch.ones(self.M) / M
-        E_q_logp_y =  -1.0*torch.multiply(self.r(),probs.log()).sum()
-        q_y = torch.distributions.Categorical(self.r())
-        
+        probs = torch.ones(self.M) / self.M
+        E_q_logp_y =  -1.0*torch.mul(self.r,probs.log()).sum()
+        q_y = torch.distributions.Categorical(self.r)
+
         a = self._1_feature_prob(self.tau).sum()
         b = self._2_feature_assign(self.nu, self.tau).sum()
         c = self._3_feature_prob(self.phi_var, self.phi).sum()
         e = self._5_entropy(self.tau, self.phi_var, self.nu).sum()
-        lik = 0.0
-        for i in range(X.size()[0]):
-            lik_i = likelihood_single(X,nu,phi_var,phi,i)
-            temp_i = torch.multiply(self.r()[i],(1.0/self.T)).sum()
-            lik += lik_i*temp_i
-        return a + b + c + lik + e + E_q_logp_y + q_y.entropy()
+        lik = self._4_likelihood_tempered(X,self.nu,self.phi_var,self.phi).sum()
+        return a + b + c + lik + e + E_q_logp_y + q_y.entropy().sum()
 
     def elbo_annealed(self, X, T):
         a = self._1_feature_prob(self.tau).sum()
@@ -298,6 +234,47 @@ class InfiniteIBP(nn.Module):
             (first_term + second_term + third_term + fourth_term)
 
         return constant + nonconstant
+
+
+
+    def _4_likelihood_tempered(self, X, nu, phi_var, phi):
+        """
+        @param X: (N, D)
+        @param nu: (N, K)
+        @param phi_var: (K, D)
+        @param phi: (K, D)
+        @return: ()
+
+        Computes Likelihood: E_q(Z),q(A) [logp(X_n|Z_n,A,sigma_n^2 I)]
+        Same as Finite Approach
+        """
+        N, _ = X.shape
+        K, D = self.K, self.D # for notational simplicity
+        ret = 0
+        constant = -0.5 * D * (self.sigma_n.log() + LOG_2PI)
+
+        temps = self.r@self.T
+
+        first_term = X.pow(2).sum()
+        second_term = (-2 * (nu.view(N, K, 1) * phi.view(1, K, D)) * X.view(N, 1, D))
+        second_term = second_term.sum(dim=2)
+        second_term = second_term.sum(dim=1) 
+        second_term = torch.mul(temps,second_term).sum()
+
+        third_term = 2 * torch.triu((phi @ phi.transpose(0, 1)) * \
+                (nu.transpose(0, 1) @ nu), diagonal=1).sum()
+
+        # have to loop because of torch.trace again
+        fourth_term = 0
+        for k in range(K):
+            fourth_term += (nu[:, k] * (phi_var[k].sum() + phi[k].pow(2).sum())).sum()
+
+        nonconstant = (-0.5/(self.sigma_n**2)) * \
+            (first_term + second_term + third_term + fourth_term)
+
+        return constant + nonconstant
+
+
 
     @staticmethod
     def _entropy_q_v(tau):

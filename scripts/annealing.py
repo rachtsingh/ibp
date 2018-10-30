@@ -21,9 +21,12 @@ def VT():
 
     N = 500
     X = generate_gg_blocks_dataset(N, 0.05)
+    M = 10
 
     model = InfiniteIBP(1.5, 6, 0.1, 0.05, 36)
     model.init_z(N)
+    model.init_r_and_T(N,M)
+
     model.train()
 
     visualize_A_save(model.phi.detach().numpy(), 0)
@@ -35,15 +38,15 @@ def VT():
     elbo_array = []
     iter_count = 0
     for j in range(10):
-        T = 10.0 - j
-        print("Temperature is:",T)
         for i in range(1000):
             optimizer.zero_grad()
-            loss = -model.elbo_tempered(X,T)
+            loss = -model.elbo_tempered(X)
             print("[Epoch {:<3}] ELBO = {:.3f}".format(i + 1, -loss.item()))
             loss.backward()
 
             optimizer.step()
+
+            print(model.r)
 
             iter_count += 1
             assert loss.item() != np.inf, "loss is inf"
@@ -100,4 +103,5 @@ def linear_AVI():
     import ipdb; ipdb.set_trace()
 
 if __name__ == '__main__':
+    VT()
     #linear_AVI()
