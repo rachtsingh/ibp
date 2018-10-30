@@ -58,6 +58,7 @@ class InfiniteIBP(nn.Module):
         self.M = M
         self._r = nn.Parameter(torch.rand(N,self.M))
         self.T = torch.arange(1,self.M+1.0)
+        print("T IS",self.T)
 
     def init_z(self, N=100):
         self._nu = nn.Parameter(torch.rand(N, self.K))
@@ -70,7 +71,7 @@ class InfiniteIBP(nn.Module):
 
     @property
     def r(self):
-        return nn.Softmax(dim=0)(self._r)
+        return nn.Softmax(dim=1)(self._r)
 
     @property
     def tau(self):

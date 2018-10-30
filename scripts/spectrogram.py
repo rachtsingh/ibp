@@ -30,7 +30,7 @@ def infer_music():
     # We will do factorization for the magnitudes np.abs(spectrogram)
     # We will need the phase np.angle(spectrogram) to resynthesize to audio
     # Only keep first 500 time windows for now. To increase data size, keep all timesteps
-    y,sr = librosa.load('bach.wav')
+    y,sr = librosa.load('wav/bach.wav')
     true_spec = librosa.stft(y,n_fft=2048)
     true_mag = np.abs(true_spec)
     true_mag = true_mag.T
@@ -94,7 +94,7 @@ def infer_music():
     imag = np.multiply(mag,np.sin(true_phase))
     spec = real + imag*np.complex(0,1)
     y_reconstruct = librosa.istft(spec)
-    librosa.output.write_wav('bach_reconstruct.wav',y_reconstruct,sr) 
+    librosa.output.write_wav('wav/bach_reconstruct.wav',y_reconstruct,sr) 
     
     import ipdb; ipdb.set_trace()
 

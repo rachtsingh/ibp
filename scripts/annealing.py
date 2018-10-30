@@ -32,12 +32,15 @@ def VT():
     visualize_A_save(model.phi.detach().numpy(), 0)
     visualize_nu_save(model.nu.detach().numpy(), 0)
 
-    optimizer = torch.optim.Adam([{'params': [model._nu, model._tau]},
+    optimizer = torch.optim.Adam([{'params': [model._r,model._nu, model._tau]},
                                   {'params': [model._phi_var, model.phi], 'lr': 0.003}], lr=0.1)
 
     elbo_array = []
     iter_count = 0
     for j in range(10):
+        
+        print("r[0] SUM")
+        print(model.r[0].sum())
         for i in range(1000):
             optimizer.zero_grad()
             loss = -model.elbo_tempered(X)
@@ -45,8 +48,6 @@ def VT():
             loss.backward()
 
             optimizer.step()
-
-            print(model.r)
 
             iter_count += 1
             assert loss.item() != np.inf, "loss is inf"
@@ -96,12 +97,12 @@ def linear_AVI():
 
         visualize_A_save(model.phi.detach().numpy(), iter_count)
         visualize_nu_save(model.nu.detach().numpy(), iter_count)
-        #model._nu.data = torch.randn(model._nu.shape)
+        model._nu.data = torch.randn(model._nu.shape)
 
     plt.plot(np.arange(len(elbo_array)), np.array(elbo_array))
     plt.show()
     import ipdb; ipdb.set_trace()
 
 if __name__ == '__main__':
-    VT()
-    #linear_AVI()
+    #VT()
+    linear_AVI()
