@@ -13,12 +13,9 @@ sys.path.insert(0, os.path.abspath('..'))
 
 
 # inside-package imports below here
-from src.vi import InfiniteIBP
+from src.vi_anneal import InfiniteIBP
 from src.utils import register_hooks, visualize_A, visualize_A_save, visualize_nu_save
 from src.data import generate_gg_blocks, generate_gg_blocks_dataset, gg_blocks
-
-
-
 
 def VT():
 

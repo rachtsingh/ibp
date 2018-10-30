@@ -8,6 +8,7 @@ from torch.distributions import Bernoulli as Bern
 from .utils import register_hooks, visualize_A
 from .data import generate_gg_blocks, generate_gg_blocks_dataset, gg_blocks
 
+import sys
 
 LOG_2PI = 1.8378770664093453
 EPS = 1e-16
@@ -66,7 +67,7 @@ class InfiniteIBP(nn.Module):
     constrained-to-be-positive version
     """
 
-    @propety
+    @property
     def r(self):
         return nn.Softmax(dim=0)(self._r)
 
@@ -109,26 +110,53 @@ class InfiniteIBP(nn.Module):
         Computes Likelihood: E_q(Z),q(A) [logp(X_n|Z_n,A,sigma_n^2 I)]
         Same as Finite Approach
         """
+        
         N, _ = X.shape
         K, D = self.K, self.D # for notational simplicity
-        ret = 0
+        iret = 0
+        
         constant = -0.5 * D * (self.sigma_n.log() + LOG_2PI)
+        first_term = X[i].pow(2).sum()
+        
+        second_term = 0.0
+        for k in range(self.K):
+            nu_ik = nu[i,k]
+            phi_k = phi[k].unsqueeze(0)
+            X_i_T = X[i].unsqueeze(1)
+            second_term += (phi_k@X_i_T)
+        second_term = -2.0*second_term
 
-        first_term = X.pow(2).sum()
-        second_term = (-2 * (nu.view(N, K, 1) * phi.view(1, K, D)) * X.view(N, 1, D)).sum()
+        nu_local = torch.zeros(N,self.K)
+        nu_local[i] += nu[i]
         third_term = 2 * torch.triu((phi @ phi.transpose(0, 1)) * \
-                (nu.transpose(0, 1) @ nu), diagonal=1).sum()
+                (nu_local.transpose(0, 1) @ nu_local), diagonal=1).sum()
 
         # have to loop because of torch.trace again
         fourth_term = 0
         for k in range(K):
-            fourth_term += (nu[:, k] * (phi_var[k].sum() + phi[k].pow(2).sum())).sum()
+            fourth_term += (nu_local[:, k] * (phi_var[k].sum() + phi[k].pow(2).sum())).sum()
 
         nonconstant = (-0.5/(self.sigma_n**2)) * \
             (first_term + second_term + third_term + fourth_term)
 
         return constant + nonconstant
 
+
+    def elbo_sum_single(self,X):
+        """
+        This is the evidence lower bound evaluated at X, when X is of shape (N, D)
+        i.e. log p_K(X | theta) geq ELBO
+        """
+        a = self._1_feature_prob(self.tau).sum()
+        b = self._2_feature_assign(self.nu, self.tau).sum()
+        c = self._3_feature_prob(self.phi_var, self.phi).sum()
+        
+        d = 0.0
+        for i in range(X.size()[0]):
+            d += self.likelihood_single(X,self.nu,self.phi_var,self.phi,i)
+        e = self._5_entropy(self.tau, self.phi_var, self.nu).sum()
+        return a + b + c + d + e
+    
     def elbo_tempered(self, X, T):
         """
         This is the evidence lower bound evaluated at X, when X is of shape (N, D)
