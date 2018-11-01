@@ -19,9 +19,9 @@ from src.data import generate_gg_blocks, generate_gg_blocks_dataset, gg_blocks
 
 def init_weights(m):
     if type(m) == nn.Linear:
-        torch.nn.init.normal_(m.weight, mean=0, std=10)
+        torch.nn.init.normal_(m.weight, mean=0, std=0.01)
         m.bias.data.fill_(0.01)
-
+        print('encoder weight init')
 
 def vae_test():
 
