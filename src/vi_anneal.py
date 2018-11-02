@@ -4,8 +4,7 @@ from torch import nn
 from torch import digamma
 from torch.distributions import MultivariateNormal as MVN
 from torch.distributions import Bernoulli as Bern
-from torch import optim
-from torch.nn import functional as F
+
 from .utils import register_hooks, visualize_A
 from .data import generate_gg_blocks, generate_gg_blocks_dataset, gg_blocks
 
@@ -14,7 +13,7 @@ import sys
 LOG_2PI = 1.8378770664093453
 EPS = 1e-16
 
-class InfiniteIBP_VAE(nn.Module):
+class InfiniteIBP(nn.Module):
     """
     Infinite/Non-Truncated Indian Buffet Process
     with a mean-field variational posterior approximation.
@@ -37,7 +36,7 @@ class InfiniteIBP_VAE(nn.Module):
     NOTE: must call init_z with a given N to start.
     """
     def __init__(self, alpha, K, sigma_a, sigma_n, D):
-        super(InfiniteIBP_VAE, self).__init__()
+        super(InfiniteIBP, self).__init__()
 
         # idempotent - all are constant and have requires_grad=True
         self.alpha = torch.tensor(alpha)
@@ -45,23 +44,24 @@ class InfiniteIBP_VAE(nn.Module):
         self.sigma_a = torch.tensor(sigma_a)
         self.sigma_n = torch.tensor(sigma_n)
         self.D = torch.tensor(D)
-
         # we don't know N, but we'll still initialize everything else
         self.init_variables()
 
-    def init_variables(self):
+    def init_variables(self, N=100):
         # NOTE: tau must be positive, so we use the @property below
         self._tau = nn.Parameter(torch.rand(self.K, 2))
         self.phi = nn.Parameter(torch.randn(self.K, self.D) * self.sigma_a)
         self._phi_var = nn.Parameter(torch.zeros(self.K, self.D) - 2.)
 
-        self.nu = nn.Sequential(
-                    nn.Linear(self.D, 400),
-                    nn.ReLU(),
-                    nn.Linear(400, self.K.item()),
-                    nn.Sigmoid()
-        )
+    # For Variational Tempering
+    def init_r_and_T(self,N,M):
+        self.M = M
+        self._r = nn.Parameter(torch.rand(N,self.M))
+        self.T = torch.arange(1,self.M+1.0)
+        print("T IS",self.T)
 
+    def init_z(self, N=100):
+        self._nu = nn.Parameter(torch.rand(N, self.K))
 
     """
     Note we use the following trick for sweeping the constraint parametrization
@@ -70,8 +70,16 @@ class InfiniteIBP_VAE(nn.Module):
     """
 
     @property
+    def r(self):
+        return nn.Softmax(dim=1)(self._r)
+
+    @property
     def tau(self):
         return 0.5   + nn.Softplus()(self._tau)
+
+    @property
+    def nu(self):
+        return nn.Sigmoid()(self._nu)
 
     @property
     def phi_var(self):
@@ -82,15 +90,37 @@ class InfiniteIBP_VAE(nn.Module):
         This is the evidence lower bound evaluated at X, when X is of shape (N, D)
         i.e. log p_K(X | theta) geq ELBO
         """
-
-        nu = self.nu(X)
-        self.most_recent_nu = nu
         a = self._1_feature_prob(self.tau).sum()
-        b = self._2_feature_assign(nu, self.tau).sum()
+        b = self._2_feature_assign(self.nu, self.tau).sum()
         c = self._3_feature_prob(self.phi_var, self.phi).sum()
-        d = self._4_likelihood(X, nu, self.phi_var, self.phi).sum()
-        e = self._5_entropy(self.tau, self.phi_var, nu).sum()
+        d = self._4_likelihood(X, self.nu, self.phi_var, self.phi).sum()
+        e = self._5_entropy(self.tau, self.phi_var, self.nu).sum()
         return a + b + c + d + e
+    
+
+    def elbo_tempered(self, X):
+        """
+        This is the evidence lower bound evaluated at X, when X is of shape (N, D)
+        i.e. log p_K(X | theta) geq ELBO
+        """
+        probs = torch.ones(self.M) / self.M
+        E_q_logp_y =  -1.0*torch.mul(self.r,probs.log()).sum()
+        q_y = torch.distributions.Categorical(self.r)
+
+        a = self._1_feature_prob(self.tau).sum()
+        b = self._2_feature_assign(self.nu, self.tau).sum()
+        c = self._3_feature_prob(self.phi_var, self.phi).sum()
+        e = self._5_entropy(self.tau, self.phi_var, self.nu).sum()
+        lik = self._4_likelihood_tempered(X,self.nu,self.phi_var,self.phi).sum()
+        return a + b + c + lik + e + E_q_logp_y + q_y.entropy().sum()
+
+    def elbo_annealed(self, X, T):
+        a = self._1_feature_prob(self.tau).sum()
+        b = self._2_feature_assign(self.nu, self.tau).sum()
+        c = self._3_feature_prob(self.phi_var, self.phi).sum()
+        d = self._4_likelihood(X, self.nu, self.phi_var, self.phi).sum()
+        e = self._5_entropy(self.tau, self.phi_var, self.nu).sum()
+        return a + b + c + d/T + e
 
     def _1_feature_prob(self, tau):
         """
@@ -206,6 +236,47 @@ class InfiniteIBP_VAE(nn.Module):
 
         return constant + nonconstant
 
+
+
+    def _4_likelihood_tempered(self, X, nu, phi_var, phi):
+        """
+        @param X: (N, D)
+        @param nu: (N, K)
+        @param phi_var: (K, D)
+        @param phi: (K, D)
+        @return: ()
+
+        Computes Likelihood: E_q(Z),q(A) [logp(X_n|Z_n,A,sigma_n^2 I)]
+        Same as Finite Approach
+        """
+        N, _ = X.shape
+        K, D = self.K, self.D # for notational simplicity
+        ret = 0
+        constant = -0.5 * D * (self.sigma_n.log() + LOG_2PI)
+
+        temps = self.r@self.T
+
+        first_term = X.pow(2).sum()
+        second_term = (-2 * (nu.view(N, K, 1) * phi.view(1, K, D)) * X.view(N, 1, D))
+        second_term = second_term.sum(dim=2)
+        second_term = second_term.sum(dim=1) 
+        second_term = torch.mul(temps,second_term).sum()
+
+        third_term = 2 * torch.triu((phi @ phi.transpose(0, 1)) * \
+                (nu.transpose(0, 1) @ nu), diagonal=1).sum()
+
+        # have to loop because of torch.trace again
+        fourth_term = 0
+        for k in range(K):
+            fourth_term += (nu[:, k] * (phi_var[k].sum() + phi[k].pow(2).sum())).sum()
+
+        nonconstant = (-0.5/(self.sigma_n**2)) * \
+            (first_term + second_term + third_term + fourth_term)
+
+        return constant + nonconstant
+
+
+
     @staticmethod
     def _entropy_q_v(tau):
         return ((tau.lgamma().sum(1) - tau.sum(1).lgamma()) - \
@@ -238,3 +309,97 @@ class InfiniteIBP_VAE(nn.Module):
                self._entropy_q_A(phi_var) + \
                self._entropy_q_z(nu)
 
+    def cavi(self, X):
+        """
+        TODO: should this function have arguments?
+        There are so many dumb terms in this
+        """
+        N, K, D = X.shape[0], self.K, self.D
+        for k in range(K):
+            precision = (1./(self.sigma_a ** 2) + self.nu[:, k].sum()/(self.sigma_n**2))
+            self.phi_var[k] = torch.ones(self.D) / precision
+            s = (self.nu[:, k].view(N, 1) * (X - (self.nu @ self.phi - torch.ger(self.nu[:, k], self.phi[k])))).sum(0)
+            self.phi[k] = s/((self.sigma_n ** 2) * precision)
+
+        # update q(z)
+        # we shouldn't vectorize this I think (TODO: discuss)
+        # Marks comment: update for nu_nk depends on nu_nl forall l != k
+        # so perhaps it can be parallelized across n, but not k
+        for k in range(K):
+            for n in range(N):
+                first_term = (digamma(self.tau[:k+1, 1]) - digamma(self.tau.sum(1)[:k+1])).sum() - \
+                    self._E_log_stick(self.tau, self.K)[0][k]
+                # this line is really slow
+                other_prod = (self.nu @ self.phi - self.nu[:, k].view((N, 1)) * self.phi[k].view((1, D)))[n]
+                second_term = -0.5 / (self.sigma_n ** 2) * (self.phi_var[k].sum() + self.phi[k].pow(2).sum()) + \
+                    (self.phi[k] @ (X[n] - other_prod))/ (self.sigma_n ** 2)
+                self.nu[n][k] = 1./(1. + (-(first_term + second_term)).exp())
+
+        # update q(pi)
+        for k in range(K):
+            q = self._E_log_stick(self.tau, self.K)[1]
+            self.tau[k][0] = self.alpha + self.nu[:, k:].sum() + \
+                ((N - self.nu.sum(0)) * q[:, k+1:].sum(1))[k+1:].sum()
+            self.tau[k][1] = 1 + ((N - self.nu.sum(0)) * q[:, k])[k:].sum()
+
+"""
+Inference runners
+"""
+
+def fit_infinite_to_ggblocks_cavi():
+    from tests.test_vi import test_elbo_components, test_q_E_logstick
+
+    N = 500
+    X = generate_gg_blocks_dataset(N, 0.05)
+
+    model = InfiniteIBP(4., 6, 0.05, 0.05, 36)
+    model.init_z(N)
+
+    for i in range(10):
+        model.cavi(X)
+        print("[Epoch {:<3}] ELBO = {:.3f}".format(i + 1, model.elbo(X).item()))
+
+    visualize_A(model.phi.detach().numpy())
+
+def fit_infinite_to_ggblocks_advi_exact():
+    # used to debug infs
+    from tests.test_vi import test_elbo_components, test_q_E_logstick
+
+    SCALE = 1.
+
+    N = 500
+    X = generate_gg_blocks_dataset(N, 0.05)
+
+    # for i in range(10):
+    model = InfiniteIBP(1.5, 6, 0.1, 0.5, 36)
+    model.phi.data[:4] = SCALE * gg_blocks()
+    visualize_A(model.phi.detach().numpy())
+    model.init_z(N)
+    model.train()
+
+    optimizer = torch.optim.Adam(model.parameters(), 0.01)
+
+    plots = np.zeros((1000, 6, 36))
+
+    for i in range(1000):
+        optimizer.zero_grad()
+        loss = -model.elbo(X)
+        print("[Epoch {:<3}] ELBO = {:.3f}".format(i + 1, -loss.item()))
+        loss.backward()
+        optimizer.step()
+
+        # test_elbo_components((model, X))
+        # test_q_E_logstick((model.tau.detach(), model.K))
+        plots[i] = model.phi.detach().numpy().reshape((6, 36))
+        assert loss.item() != np.inf, "loss is inf"
+
+    np.save('features.npy', plots)
+    # visualize_A(model.phi.detach().numpy())
+    # import ipdb; ipdb.set_trace()
+
+if __name__ == '__main__':
+    """
+    python src/vi.py will just check that the model works on a ggblocks dataset
+    """
+    # fit_infinite_to_ggblocks_cavi()
+    fit_infinite_to_ggblocks_advi_exact()
