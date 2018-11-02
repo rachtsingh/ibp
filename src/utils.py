@@ -2,14 +2,14 @@ from graphviz import Digraph
 import torch
 import numpy as np
 from torch.autograd import Variable, Function
-from matplotlib import pyplot as plt
-from matplotlib.pyplot import subplots
 import seaborn as sns
 
 def visualize_A(A):
     """
     Assume that A can be reshaped into 6 (6, 6) images
     """
+    from matplotlib import pyplot as plt
+    from matplotlib.pyplot import subplots
     a, b = A.min(), A.max()
     fig, axes = subplots(3, 2)
     for i, ax in enumerate(axes.reshape(-1)):
@@ -21,6 +21,8 @@ def visualize_A(A):
     plt.show()
 
 def visualize_A_save(A, iter):
+    from matplotlib import pyplot as plt
+    from matplotlib.pyplot import subplots
     a, b = A.min(), A.max()
     fig, axes = subplots(3, 2)
     for i, ax in enumerate(axes.reshape(-1)):
@@ -32,6 +34,8 @@ def visualize_A_save(A, iter):
     plt.savefig("features_{}.png".format(iter), dpi=300)
 
 def visualize_nu_save(nu, iter):
+    from matplotlib import pyplot as plt
+    from matplotlib.pyplot import subplots
     plt.figure()
     sns.distplot(nu.reshape((-1,)), kde=False)
     plt.savefig("nu_{}.png".format(iter), dpi=300)

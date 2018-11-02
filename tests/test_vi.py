@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.abspath('..'))
 from src.vi import InfiniteIBP
 
 np.set_printoptions(precision=4, suppress=True)
+EPS = 1e-16
 
 def test_q_E_logstick(inputs=None):
     """
@@ -29,7 +30,7 @@ def test_q_E_logstick(inputs=None):
     else:
         tau, K = inputs
 
-    # compute, by hand, the distribution q_2
+    # # compute, by hand, the distribution q_2
     hand_q = np.zeros(2)
     taud = tau.clone().detach().numpy()
     hand_q[0] = dgm(taud[0, 1]) - dgm(taud[0, 1] + taud[0, 0])
@@ -38,13 +39,15 @@ def test_q_E_logstick(inputs=None):
     hand_q = np.exp(hand_q)
     hand_q /= hand_q.sum()
 
-    # let's check E_log_stick for k=2 (i.e. index 1)
+    # let's check E_log_stick for k = 2 (i.e. index 1)
     hand_E_logstick = 0
-    hand_E_logstick += (hand_q[0] * dgm(taud[0, 1]) + hand_q[1] * dgm(taud[1, 1]))
-    hand_E_logstick += (hand_q[1] * dgm(taud[0, 0]))
-    hand_E_logstick -= (dgm(taud[0, 0] + taud[0, 1]) * (hand_q[0] + hand_q[1]) + \
-                        dgm(taud[1, 0] + taud[1, 1]) * (hand_q[1]))
-    hand_E_logstick -= (hand_q[0] * np.log(hand_q[0]) + hand_q[1] * np.log(hand_q[1]))
+    a = (hand_q[0] * dgm(taud[0, 1]) + hand_q[1] * dgm(taud[1, 1]))
+    b = (hand_q[1] * dgm(taud[0, 0]))
+    ca = dgm(taud[0, 0] + taud[0, 1]) * (hand_q[0] + hand_q[1])
+    cb = dgm(taud[1, 0] + taud[1, 1]) * (hand_q[1])
+    d = (hand_q[0] * np.log(hand_q[0]) + hand_q[1] * np.log(hand_q[1]))
+
+    hand_E_logstick = a + b - ca - cb - d
 
     # for q_3
     hand_q_3 = np.zeros(3)
@@ -56,7 +59,7 @@ def test_q_E_logstick(inputs=None):
     hand_q_3 = np.exp(hand_q_3)
     hand_q_3 /= hand_q_3.sum()
 
-    # let's check E_log_stick for k=2 (i.e. index 1)
+    # let's check E_log_stick for k = 3 (i.e. index 2)
     hand_E_logstick_3 = 0
     hand_E_logstick_3 += (hand_q_3[0] * dgm(taud[0, 1]) + hand_q_3[1] * dgm(taud[1, 1]) + hand_q_3[2] * dgm(taud[2, 1]))
     hand_E_logstick_3 += ((hand_q_3[1] + hand_q_3[2]) * dgm(taud[0, 0])) + \
@@ -68,7 +71,26 @@ def test_q_E_logstick(inputs=None):
                           hand_q_3[1] * np.log(hand_q_3[1]) + \
                           hand_q_3[2] * np.log(hand_q_3[2]))
 
+    # since the errors seem to appear later down inthe term, let's check the value of _E_log_stick[4] but use the (hopefully correct) q
     E_logstick, q = InfiniteIBP._E_log_stick(tau, K)
+
+    k = 3 # this is the index, so k = 4 in the equations (i.e. 1, 2, 3, 4), so q is a 4-dim Cat
+    hand_E_logstick_4 = 0
+    for m in range(k + 1):
+        hand_E_logstick_4 += q[k][m] * digamma(tau[m, 1])
+    for m in range(k):
+        q_sum = 0
+        for n in range(m + 1, k + 1):
+            q_sum += q[k][n]
+        hand_E_logstick_4 += q_sum * digamma(tau[m, 0])
+    for m in range(k + 1):
+        q_sum = 0
+        for n in range(m, k + 1):
+            q_sum += q[k][n]
+        hand_E_logstick_4 -= q_sum * digamma(tau[m, 0] + tau[m, 1])
+    for m in range(k + 1):
+        hand_E_logstick_4 -= q[k][m] * (q[k][m] + EPS).log()
+
     assert np.abs((q[1, :2].numpy() - hand_q)).max() < 1e-6, "_E_log_stick doesn't compute q_2 correctly"
     assert np.abs((q[2, :3].numpy() - hand_q_3)).max() < 1e-6, "_E_log_stick doesn't compute q_3 correctly"
 
@@ -149,17 +171,12 @@ def test_cavi_updates_are_correct(inputs=None):
 
     optimizer = torch.optim.SGD(model.parameters(), 0.01)
 
-    # # test that the updates for phi[2] is about right:
+    # test that the updates for phi[2] is about right:
     # k = 2
 
-    # # CAVI update for phi[2]
     # model.eval()
-    # precision = (1./(model.sigma_a ** 2) + model.nu[:, k].sum()/(model.sigma_n**2))
-    # model.phi_var[k] = torch.ones(model.D) / precision
-    # s = (model.nu[:, k].view(N, 1) * (X - (model.nu @ model.phi - torch.ger(model.nu[:, k], model.phi[k])))).sum(0)
-    # model.phi[k] = s/((model.sigma_n ** 2) * precision)
+    # model.cavi_phi(k, X)
 
-    # # compute the ELBO
     # model.train()
     # optimizer.zero_grad()
     # loss = model.elbo(X)
@@ -170,45 +187,46 @@ def test_cavi_updates_are_correct(inputs=None):
     # CAVI update for nu
     k = 2
     n = 1
-    model.eval()
-    first_term = (digamma(model.tau[:k+1, 0]) - digamma(model.tau.sum(1)[:k+1])).sum() - \
-        model._E_log_stick(model.tau, model.K)[0][k]
+    # model.eval()
+    log_stick, _ = model._E_log_stick(model.tau, model.K)
+    model.cavi_nu(n, k, X, log_stick)
 
-    # this line is really slow
-    other_prod = 0
-    for l in range(model.K):
-        if k != l:
-            other_prod += model.nu[n][l] * model.phi[l]
-    # other_prod = (model.nu[n] @ model.phi - model.nu[n, k] * model.phi[k])
-    second_term = ((-0.5 / (model.sigma_n ** 2)) * (model.phi_var[k].sum() + model.phi[k].pow(2).sum())) + \
-        (model.phi[k] @ (X[n] - other_prod)) / (model.sigma_n ** 2)
-    model.nu[n][k] = nn.Sigmoid()(first_term + second_term)
-    # model.nu[n][k] = 1./(1. + (-1 * (first_term + second_term)).exp())
-
-    # compute the ELBO
+    # # compute the ELBO
     model.train()
     optimizer.zero_grad()
     loss = model.elbo(X)
     loss.backward()
 
     print(model._nu.grad)
-
-    assert model._nu.grad[n][k].abs().max().item() < 1e-4, "CAVI update for nu is wrong"
+    # assert model._nu.grad[n][k].abs().max().item() < 1e-4, "CAVI update for nu is wrong"
 
 def test_e_log_stick():
-    model = InfiniteIBP(4., 6, 0.1, 0.5, 36)
+    model = InfiniteIBP(10., 15, 0.1, 0.5, 36)
     model.init_z(10)
 
     # take a lot of samples to get something working
     dist = Beta(model.tau[:, 0], model.tau[:, 1])
-    samples = dist.sample((1000000,))
+    xes = []
+    yes = []
+    # for i in range(5):
+    samples = dist.sample((100000,))
     f = (1. - samples.cumprod(1)).log().mean(0)
+        # xes.append(np.arange(f.shape[0]))
+        # yes.append(f)
     log_stick = model._E_log_stick(model.tau, model.K)[0]
+
+    # import seaborn as sns
+    # from matplotlib import pyplot as plt
+    # sns.barplot(np.hstack(xes), np.hstack(yes))
+    # plt.show()
+
+    print(log_stick)
+    print(f)
 
     import ipdb; ipdb.set_trace()
 
 def test_vectorized_cavi():
-    model = InfiniteIBP(4., 6, 0.1, 0.5, 36)
+    model = InfiniteIBP(4., 6, 0.1, 0.05, 36)
     model.init_z(10)
 
     X = torch.randn(10, 36)

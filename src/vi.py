@@ -8,6 +8,9 @@ from torch.distributions import Bernoulli as Bern
 from .utils import register_hooks, visualize_A
 from .data import generate_gg_blocks, generate_gg_blocks_dataset, gg_blocks
 
+# relative path import hack
+import sys, os
+sys.path.insert(0, os.path.abspath('..'))
 
 LOG_2PI = 1.8378770664093453
 EPS = 1e-16
@@ -126,13 +129,14 @@ class InfiniteIBP(object):
         first_term = digamma(tau[:, 1])
         second_term = digamma(tau[:, 0]).cumsum(0) - digamma(tau[:, 0])
         third_term = digamma(tau.sum(1)).cumsum(0)
-        import ipdb; ipdb.set_trace()
         q += (first_term + second_term - third_term).view(1, -1)
         q = torch.tril(q.exp())
         q = torch.nn.functional.normalize(q, p=1, dim=1)
-        # TODO: should we detach q? what does that do to the ADVI?
+        # NOTE: we should definitely detach q, since it's a computational aid
+        # (i.e. optimized to make our lower bound better)
 
         assert (q.sum(1) - torch.ones(K)).abs().max().item() < 1e-6, "WTF normalize didn't work"
+        q = q.detach()
 
         # each vector should be size (K,)
         # let's do this nonvectorized to start
@@ -140,11 +144,27 @@ class InfiniteIBP(object):
 
         # this is really slow and can be vectorized
         for k in range(K):
-            torch_e_logstick[k] += (digamma(tau[:, 1]) * q[k]).sum()
-            torch_e_logstick[k] += ((1 - q[k].cumsum(0)) * digamma(tau[:, 0]))[:k].sum()
-            for m in range(k + 1): # m needs to be
-                torch_e_logstick[k] -= q[k][m:].sum() * digamma(tau.sum(1))[m]
-            torch_e_logstick[k] -= (q[k, :k+1] * (q[k, :k+1] + EPS).log()).sum()
+            val = 0
+            for m in range(k + 1):
+                val += q[k][m] * digamma(tau[m, 1])
+            for m in range(k):
+                q_sum = 0
+                for n in range(m + 1, k + 1):
+                    q_sum += q[k][n]
+                val += q_sum * digamma(tau[m, 0])
+            for m in range(k + 1):
+                q_sum = 0
+                for n in range(m, k + 1):
+                    q_sum += q[k][n]
+                val -= q_sum * digamma(tau[m, 0] + tau[m, 1])
+            for m in range(k + 1):
+                val -= q[k][m] * (q[k][m] + EPS).log()
+            torch_e_logstick[k] += val
+            # torch_e_logstick[k] += (digamma(tau[:, 1]) * q[k]).sum()
+            # torch_e_logstick[k] += ((1 - q[k].cumsum(0)) * digamma(tau[:, 0]))[:k].sum()
+            # for m in range(k + 1): # m needs to be
+            #     torch_e_logstick[k] -= q[k][m:].sum() * digamma(tau.sum(1))[m]
+            # torch_e_logstick[k] -= (q[k, :k+1] * (q[k, :k+1] + EPS).log()).sum()
 
         return torch_e_logstick, q
 
@@ -241,6 +261,29 @@ class InfiniteIBP(object):
                self._entropy_q_A(phi_var) + \
                self._entropy_q_z(nu)
 
+    def cavi_phi(self, k, X):
+        N, K, D = X.shape[0], self.K, self.D
+        precision = (1./(self.sigma_a ** 2) + self.nu[:, k].sum()/(self.sigma_n**2))
+        self.phi_var[k] = torch.ones(self.D) / precision
+        s = (self.nu[:, k].view(N, 1) * (X - (self.nu @ self.phi - torch.ger(self.nu[:, k], self.phi[k])))).sum(0)
+        self.phi[k] = s/((self.sigma_n ** 2) * precision)
+
+    def cavi_nu(self, n, k, X, log_stick):
+        N, K, D = X.shape[0], self.K, self.D
+        first_term = (digamma(self.tau[:k+1, 0]) - digamma(self.tau.sum(1)[:k+1])).sum() - \
+            log_stick[k]
+        # this line is really slow
+        other_prod = (self.nu[n] @ self.phi - self.nu[n, k] * self.phi[k])
+        second_term = (-0.5 / (self.sigma_n ** 2) * (self.phi_var[k].sum() + self.phi[k].pow(2).sum())) + \
+            (self.phi[k] @ (X[n] - other_prod)) / (self.sigma_n ** 2)
+        self.nu[n][k] = nn.Sigmoid()(first_term + second_term)
+
+    def cavi_tau(self, k, X, q):
+        N, K, D = X.shape[0], self.K, self.D
+        self.tau[k][0] = self.alpha + self.nu[:, k:].sum() + \
+            ((N - self.nu.sum(0)) * q[:, k+1:].sum(1))[k+1:].sum()
+        self.tau[k][1] = 1 + ((N - self.nu.sum(0)) * q[:, k])[k:].sum()
+
     def cavi(self, X):
         """
         TODO: should this function have arguments?
@@ -248,38 +291,27 @@ class InfiniteIBP(object):
         """
         N, K, D = X.shape[0], self.K, self.D
         for k in range(K):
-            precision = (1./(self.sigma_a ** 2) + self.nu[:, k].sum()/(self.sigma_n**2))
-            self.phi_var[k] = torch.ones(self.D) / precision
-            s = (self.nu[:, k].view(N, 1) * (X - (self.nu @ self.phi - torch.ger(self.nu[:, k], self.phi[k])))).sum(0)
-            self.phi[k] = s/((self.sigma_n ** 2) * precision)
+            self.cavi_phi(k, X)
 
+        log_stick, q = self._E_log_stick(self.tau, self.K)
         # update q(z)
         # we shouldn't vectorize this I think (TODO: discuss)
         # Marks comment: update for nu_nk depends on nu_nl forall l != k
         # so perhaps it can be parallelized across n, but not k
         for k in range(K):
             for n in range(N):
-                first_term = (digamma(self.tau[:k+1, 0]) - digamma(self.tau.sum(1)[:k+1])).sum() - \
-                    self._E_log_stick(self.tau, self.K)[0][k]
-                # this line is really slow
-                other_prod = (self.nu[n] @ self.phi - self.nu[n, k] * self.phi[k])
-                second_term = (-0.5 / (self.sigma_n ** 2) * (self.phi_var[k].sum() + self.phi[k].pow(2).sum())) + \
-                    (self.phi[k] @ (X[n] - other_prod)) / (self.sigma_n ** 2)
-                self.nu[n][k] = 1./(1. + (-(first_term + second_term)).exp())
+                self.cavi_nu(n, k, X, log_stick)
 
         # update q(pi)
         for k in range(K):
-            q = self._E_log_stick(self.tau, self.K)[1]
-            self.tau[k][0] = self.alpha + self.nu[:, k:].sum() + \
-                ((N - self.nu.sum(0)) * q[:, k+1:].sum(1))[k+1:].sum()
-            self.tau[k][1] =     1 + ((N - self.nu.sum(0)) * q[:, k])[k:].sum()
+            self.cavi_tau(k, X, q)
 
 """
 Inference runners
 """
 
 def fit_infinite_to_ggblocks_cavi():
-    from tests.test_vi import test_elbo_components, test_q_E_logstick
+    # from tests.test_vi import test_elbo_components, test_q_E_logstick
 
     N = 500
     X = generate_gg_blocks_dataset(N, 0.05)
@@ -333,5 +365,5 @@ if __name__ == '__main__':
     """
     python src/vi.py will just check that the model works on a ggblocks dataset
     """
-    # fit_infinite_to_ggblocks_cavi()
-    fit_infinite_to_ggblocks_advi_exact()
+    fit_infinite_to_ggblocks_cavi()
+    # fit_infinite_to_ggblocks_advi_exact()
