@@ -4,6 +4,7 @@ from torch import nn
 from torch import digamma
 from torch.distributions import MultivariateNormal as MVN
 from torch.distributions import Bernoulli as Bern
+from torch.distributions import Beta
 
 # relative path import hack
 import sys, os
@@ -140,19 +141,71 @@ def test_cavi_updates_are_correct(inputs=None):
         model = InfiniteIBP(4., 6, 0.1, 0.5, 36)
         model.init_z(10)
         model.train()
-
         X = torch.randn(10, 36)
+        N, D = 10, 36
     else:
         model, X = inputs
+        N, D = X.shape[0]
 
-    # test that the updates for phi[2] is about right:
+    optimizer = torch.optim.SGD(model.parameters(), 0.01)
+
+    # # test that the updates for phi[2] is about right:
+    # k = 2
+
+    # # CAVI update for phi[2]
+    # model.eval()
+    # precision = (1./(model.sigma_a ** 2) + model.nu[:, k].sum()/(model.sigma_n**2))
+    # model.phi_var[k] = torch.ones(model.D) / precision
+    # s = (model.nu[:, k].view(N, 1) * (X - (model.nu @ model.phi - torch.ger(model.nu[:, k], model.phi[k])))).sum(0)
+    # model.phi[k] = s/((model.sigma_n ** 2) * precision)
+
+    # # compute the ELBO
+    # model.train()
+    # optimizer.zero_grad()
+    # loss = model.elbo(X)
+    # loss.backward()
+
+    # assert model.phi.grad[k].abs().max().item() < 1e-4, "CAVI update for phi is wrong"
+
+    # CAVI update for nu
     k = 2
+    n = 1
+    model.eval()
+    first_term = (digamma(model.tau[:k+1, 0]) - digamma(model.tau.sum(1)[:k+1])).sum() - \
+        model._E_log_stick(model.tau, model.K)[0][k]
 
-    # CAVI update for phi[2]
-    precision = (1./(model.sigma_a ** 2) + model.nu[:, k].sum()/(model.sigma_n**2))
-    model.phi_var[k] = torch.ones(model.D) / precision
-    s = (model.nu[:, k].view(N, 1) * (X - (model.nu @ model.phi - torch.ger(model.nu[:, k], model.phi[k])))).sum(0)
-    model.phi[k] = s/((model.sigma_n ** 2) * precision)
+    # this line is really slow
+    other_prod = 0
+    for l in range(model.K):
+        if k != l:
+            other_prod += model.nu[n][l] * model.phi[l]
+    # other_prod = (model.nu[n] @ model.phi - model.nu[n, k] * model.phi[k])
+    second_term = ((-0.5 / (model.sigma_n ** 2)) * (model.phi_var[k].sum() + model.phi[k].pow(2).sum())) + \
+        (model.phi[k] @ (X[n] - other_prod)) / (model.sigma_n ** 2)
+    model.nu[n][k] = nn.Sigmoid()(first_term + second_term)
+    # model.nu[n][k] = 1./(1. + (-1 * (first_term + second_term)).exp())
+
+    # compute the ELBO
+    model.train()
+    optimizer.zero_grad()
+    loss = model.elbo(X)
+    loss.backward()
+
+    print(model._nu.grad)
+
+    assert model._nu.grad[n][k].abs().max().item() < 1e-4, "CAVI update for nu is wrong"
+
+def test_e_log_stick():
+    model = InfiniteIBP(4., 6, 0.1, 0.5, 36)
+    model.init_z(10)
+
+    # take a lot of samples to get something working
+    dist = Beta(model.tau[:, 0], model.tau[:, 1])
+    samples = dist.sample((1000000,))
+    f = (1. - samples.cumprod(1)).log().mean(0)
+    log_stick = model._E_log_stick(model.tau, model.K)[0]
+
+    import ipdb; ipdb.set_trace()
 
 def test_vectorized_cavi():
     model = InfiniteIBP(4., 6, 0.1, 0.5, 36)
@@ -186,4 +239,4 @@ def test_vectorized_cavi():
     assert (slow_phi - fast_phi).abs().max() < 1e-5, "Fast phi is wrong"
 
 if __name__ == '__main__':
-    test_vectorized_cavi()
+    test_e_log_stick()

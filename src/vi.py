@@ -12,7 +12,7 @@ from .data import generate_gg_blocks, generate_gg_blocks_dataset, gg_blocks
 LOG_2PI = 1.8378770664093453
 EPS = 1e-16
 
-class InfiniteIBP(nn.Module):
+class InfiniteIBP(object):
     """
     Infinite/Non-Truncated Indian Buffet Process
     with a mean-field variational posterior approximation.
@@ -35,8 +35,6 @@ class InfiniteIBP(nn.Module):
     NOTE: must call init_z with a given N to start.
     """
     def __init__(self, alpha, K, sigma_a, sigma_n, D):
-        super(InfiniteIBP, self).__init__()
-
         # idempotent - all are constant and have requires_grad=True
         self.alpha = torch.tensor(alpha)
         self.K = torch.tensor(K)
@@ -49,12 +47,12 @@ class InfiniteIBP(nn.Module):
 
     def init_variables(self, N=100):
         # NOTE: tau must be positive, so we use the @property below
-        self._tau = nn.Parameter(torch.rand(self.K, 2))
-        self.phi = nn.Parameter(torch.randn(self.K, self.D) * self.sigma_a)
-        self._phi_var = nn.Parameter(torch.zeros(self.K, self.D) - 2.)
+        self._tau = torch.rand(self.K, 2)
+        self.phi = torch.randn(self.K, self.D) * self.sigma_a
+        self._phi_var = torch.zeros(self.K, self.D) - 2.
 
     def init_z(self, N=100):
-        self._nu = nn.Parameter(torch.rand(N, self.K))
+        self._nu = torch.rand(N, self.K)
 
     """
     Note we use the following trick for sweeping the constraint parametrization
@@ -64,7 +62,7 @@ class InfiniteIBP(nn.Module):
 
     @property
     def tau(self):
-        return 0.5   + nn.Softplus()(self._tau)
+        return 0.5 + nn.Softplus()(self._tau)
 
     @property
     def nu(self):
@@ -73,6 +71,23 @@ class InfiniteIBP(nn.Module):
     @property
     def phi_var(self):
         return nn.Softplus()(self._phi_var)
+
+    def train(self):
+        self._tau.requires_grad = True
+        self.phi.requires_grad = True
+        self._phi_var.requires_grad = True
+        self._nu.requires_grad = True
+
+    def eval(self):
+        self._tau.requires_grad = False
+        self.phi.requires_grad = False
+        self._phi_var.requires_grad = False
+        self._nu.requires_grad = False
+
+    def parameters(self):
+        if not self._tau.requires_grad:
+            print("WARNING: calling .parameters() but no grad required! Watch out (maybe call .train())")
+        return [self._tau, self.phi, self._phi_var, self._nu]
 
     def elbo(self, X):
         """
@@ -111,6 +126,7 @@ class InfiniteIBP(nn.Module):
         first_term = digamma(tau[:, 1])
         second_term = digamma(tau[:, 0]).cumsum(0) - digamma(tau[:, 0])
         third_term = digamma(tau.sum(1)).cumsum(0)
+        import ipdb; ipdb.set_trace()
         q += (first_term + second_term - third_term).view(1, -1)
         q = torch.tril(q.exp())
         q = torch.nn.functional.normalize(q, p=1, dim=1)
@@ -129,13 +145,6 @@ class InfiniteIBP(nn.Module):
             for m in range(k + 1): # m needs to be
                 torch_e_logstick[k] -= q[k][m:].sum() * digamma(tau.sum(1))[m]
             torch_e_logstick[k] -= (q[k, :k+1] * (q[k, :k+1] + EPS).log()).sum()
-            # first = (q * digamma(tau[:, 1]).view(1, -1)).sum(1)
-            # second = ((1 - q.cumsum(1)) * tau[:, 0]).sum(1)
-            # third = ((1 - q.cumsum(1) - q) * tau.sum(1)).sum(1)
-            # temp_q = q.clone() # TODO: why clone?
-            # temp_q[q == 0] = 1. # since half of q is 0, log(1) is now a mask
-            # fourth = (temp_q * (temp_q + EPS).log()).sum(1)
-            # torch_e_logstick = first + second + third + fourth
 
         return torch_e_logstick, q
 
@@ -250,12 +259,12 @@ class InfiniteIBP(nn.Module):
         # so perhaps it can be parallelized across n, but not k
         for k in range(K):
             for n in range(N):
-                first_term = (digamma(self.tau[:k+1, 1]) - digamma(self.tau.sum(1)[:k+1])).sum() - \
+                first_term = (digamma(self.tau[:k+1, 0]) - digamma(self.tau.sum(1)[:k+1])).sum() - \
                     self._E_log_stick(self.tau, self.K)[0][k]
                 # this line is really slow
-                other_prod = (self.nu @ self.phi - self.nu[:, k].view((N, 1)) * self.phi[k].view((1, D)))[n]
-                second_term = -0.5 / (self.sigma_n ** 2) * (self.phi_var[k].sum() + self.phi[k].pow(2).sum()) + \
-                    (self.phi[k] @ (X[n] - other_prod))/ (self.sigma_n ** 2)
+                other_prod = (self.nu[n] @ self.phi - self.nu[n, k] * self.phi[k])
+                second_term = (-0.5 / (self.sigma_n ** 2) * (self.phi_var[k].sum() + self.phi[k].pow(2).sum())) + \
+                    (self.phi[k] @ (X[n] - other_prod)) / (self.sigma_n ** 2)
                 self.nu[n][k] = 1./(1. + (-(first_term + second_term)).exp())
 
         # update q(pi)
@@ -263,7 +272,7 @@ class InfiniteIBP(nn.Module):
             q = self._E_log_stick(self.tau, self.K)[1]
             self.tau[k][0] = self.alpha + self.nu[:, k:].sum() + \
                 ((N - self.nu.sum(0)) * q[:, k+1:].sum(1))[k+1:].sum()
-            self.tau[k][1] = 1 + ((N - self.nu.sum(0)) * q[:, k])[k:].sum()
+            self.tau[k][1] =     1 + ((N - self.nu.sum(0)) * q[:, k])[k:].sum()
 
 """
 Inference runners
