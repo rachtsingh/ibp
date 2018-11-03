@@ -143,30 +143,38 @@ class InfiniteIBP(object):
         torch_e_logstick = torch.zeros(K)
 
         # this is really slow and can be vectorized
-        for k in range(K):
-            val = 0
-            for m in range(k + 1):
-                val += q[k][m] * digamma(tau[m, 1])
-            for m in range(k):
-                q_sum = 0
-                for n in range(m + 1, k + 1):
-                    q_sum += q[k][n]
-                val += q_sum * digamma(tau[m, 0])
-            for m in range(k + 1):
-                q_sum = 0
-                for n in range(m, k + 1):
-                    q_sum += q[k][n]
-                val -= q_sum * digamma(tau[m, 0] + tau[m, 1])
-            for m in range(k + 1):
-                val -= q[k][m] * (q[k][m] + EPS).log()
-            torch_e_logstick[k] += val
+        # for k in range(K):
+        #     val = 0
+        #     for m in range(k + 1):
+        #         val += q[k][m] * digamma(tau[m, 1])
+        #     for m in range(k):
+        #         q_sum = 0
+        #         for n in range(m + 1, k + 1):
+        #             q_sum += q[k][n]
+        #         val += q_sum * digamma(tau[m, 0])
+        #     for m in range(k + 1):
+        #         q_sum = 0
+        #         for n in range(m, k + 1):
+        #             q_sum += q[k][n]
+        #         val -= q_sum * digamma(tau[m, 0] + tau[m, 1])
+        #     for m in range(k + 1):
+        #         val -= q[k][m] * (q[k][m] + EPS).log()
+        #     torch_e_logstick[k] += val
 
         # this is the faster vectorized version
-        # for k in range(K):
-        #     row_q = q[k, :k + 1]
-        #     val = 0
-        #     val += (row_q * digamma(tau[:k + 1, 1])).sum()
-        #     val += (row_q * (digamma(tau[:k + 1, 0]).cumsum() - digamma(tau[:k + 1, 0]))).sum()
+        for k in range(K):
+            row_q = q[k, :k + 1]
+            val = 0
+            val += (row_q * digamma(tau[:k + 1, 1])).sum()
+            val += (row_q * (digamma(tau[:k + 1, 0]).cumsum(0) - digamma(tau[:k + 1, 0]))).sum()
+            val -= (row_q * (digamma(tau[:k + 1].sum(1)).cumsum(0))).sum()
+            val -= (row_q * (row_q + EPS).log()).sum()
+            # if k == 1:
+            #     print('a', (row_q * digamma(tau[:k + 1, 1])).sum().item())
+            #     print('b', (row_q * (digamma(tau[:k + 1, 0]).cumsum(0) - digamma(tau[:k + 1, 0]))).sum().item())
+            #     print('c', (row_q * (digamma(tau[:k + 1].sum(1)).cumsum(0))).sum().item())
+            #     print('d', (row_q * (row_q + EPS).log()).sum().item())
+            torch_e_logstick[k] += val
 
         return torch_e_logstick, q
 

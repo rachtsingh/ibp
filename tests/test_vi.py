@@ -20,6 +20,8 @@ def test_q_E_logstick(inputs=None):
     """
     Test the computation of the multinomial bound in Finale's tech report
     by computing it by hand for k=2 and k=3
+
+    PASSES
     """
 
     from scipy.special import digamma as dgm
@@ -48,6 +50,7 @@ def test_q_E_logstick(inputs=None):
     d = (hand_q[0] * np.log(hand_q[0]) + hand_q[1] * np.log(hand_q[1]))
 
     hand_E_logstick = a + b - ca - cb - d
+    # print(a, b, ca + cb, d)
 
     # for q_3
     hand_q_3 = np.zeros(3)
@@ -91,17 +94,14 @@ def test_q_E_logstick(inputs=None):
     for m in range(k + 1):
         hand_E_logstick_4 -= q[k][m] * (q[k][m] + EPS).log()
 
+    # test that the computed q is equal to the hand-computed q
     assert np.abs((q[1, :2].numpy() - hand_q)).max() < 1e-6, "_E_log_stick doesn't compute q_2 correctly"
     assert np.abs((q[2, :3].numpy() - hand_q_3)).max() < 1e-6, "_E_log_stick doesn't compute q_3 correctly"
 
-    try:
-        assert np.abs(E_logstick[1] - hand_E_logstick).max() < 1e-5, "_E_logstick_2 isn't computed correctly"
-        assert np.abs(E_logstick[2] - hand_E_logstick_3).max() < 1e-5, "_E_logstick_3 isn't computed correctly"
-    except AssertionError:
-        print(E_logstick[2].item())
-        print(hand_E_logstick)
-        print(hand_E_logstick_3)
-        raise
+    # test that the hand-computed e logstick is equal to the computed e logstick
+    assert np.abs(E_logstick[1].item() - hand_E_logstick).max() < 1e-5, "_E_logstick_2 isn't computed correctly"
+    assert np.abs(E_logstick[2].item() - hand_E_logstick_3).max() < 1e-5, "_E_logstick_3 isn't computed correctly"
+    assert np.abs(E_logstick[3].item() - hand_E_logstick_4.item()).max() < 1e-5, "_E_logstick_4 isn't computed correctly"
 
 def test_elbo_components(inputs=None):
     """
@@ -158,6 +158,10 @@ def test_elbo_components(inputs=None):
         import ipdb; ipdb.set_trace()
 
 def test_cavi_updates_are_correct(inputs=None):
+    """
+    DOES NOT PASS: for nu, works for phi
+    """
+
     # after doing the CAVI update for a single variable, we would expect that dELBO/dv is about 0.
     if inputs is None:
         model = InfiniteIBP(4., 6, 0.1, 0.5, 36)
@@ -233,7 +237,10 @@ def compute_q_Elogstick( tau , k ):
     return qs, Elogstick
 
 def test_e_log_stick():
-    model = InfiniteIBP(4., 6, 0.1, 0.5, 36)
+    """
+    This test DOES NOT PASS
+    """
+    model = InfiniteIBP(4., 10, 0.1, 0.5, 36)
     model.init_z(10)
 
     K = model.K
@@ -258,6 +265,9 @@ def test_e_log_stick():
     import ipdb; ipdb.set_trace()
 
 def test_vectorized_cavi():
+    """
+    OUT OF DATE (unnecessary?)
+    """
     model = InfiniteIBP(4., 6, 0.1, 0.05, 36)
     model.init_z(10)
 
@@ -289,4 +299,4 @@ def test_vectorized_cavi():
     assert (slow_phi - fast_phi).abs().max() < 1e-5, "Fast phi is wrong"
 
 if __name__ == '__main__':
-    test_e_log_stick()
+    test_cavi_updates_are_correct()
