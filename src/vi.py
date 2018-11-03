@@ -133,7 +133,7 @@ class InfiniteIBP(object):
         q = torch.tril(q.exp())
         q = torch.nn.functional.normalize(q, p=1, dim=1)
         # NOTE: we should definitely detach q, since it's a computational aid
-        # (i.e. optimized to make our lower bound better)
+        # (i.e. already optimized to make our lower bound better)
 
         assert (q.sum(1) - torch.ones(K)).abs().max().item() < 1e-6, "WTF normalize didn't work"
         q = q.detach()
@@ -160,11 +160,13 @@ class InfiniteIBP(object):
             for m in range(k + 1):
                 val -= q[k][m] * (q[k][m] + EPS).log()
             torch_e_logstick[k] += val
-            # torch_e_logstick[k] += (digamma(tau[:, 1]) * q[k]).sum()
-            # torch_e_logstick[k] += ((1 - q[k].cumsum(0)) * digamma(tau[:, 0]))[:k].sum()
-            # for m in range(k + 1): # m needs to be
-            #     torch_e_logstick[k] -= q[k][m:].sum() * digamma(tau.sum(1))[m]
-            # torch_e_logstick[k] -= (q[k, :k+1] * (q[k, :k+1] + EPS).log()).sum()
+
+        # this is the faster vectorized version
+        # for k in range(K):
+        #     row_q = q[k, :k + 1]
+        #     val = 0
+        #     val += (row_q * digamma(tau[:k + 1, 1])).sum()
+        #     val += (row_q * (digamma(tau[:k + 1, 0]).cumsum() - digamma(tau[:k + 1, 0]))).sum()
 
         return torch_e_logstick, q
 

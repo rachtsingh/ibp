@@ -200,28 +200,60 @@ def test_cavi_updates_are_correct(inputs=None):
     print(model._nu.grad)
     # assert model._nu.grad[n][k].abs().max().item() < 1e-4, "CAVI update for nu is wrong"
 
+def compute_q_Elogstick( tau , k ):
+    import numpy as np
+    import numpy.random as npr
+    from numpy.random import beta
+    import scipy.special as sps
+    from scipy.special import gamma, digamma, gammaln
+    from numpy.linalg import slogdet
+    from scipy.misc import logsumexp
+
+    k = k + 1 # length
+    digamma1 = np.array([sps.digamma(tau[0][i]) for i in range(k)])
+    digamma2 = np.array([sps.digamma(tau[1][i]) for i in range(k)])
+    digamma12 = np.array([sps.digamma(tau[0][i] + tau[1][i]) for i in range(k)])
+
+    # initialize q distribution
+    lqs = np.array([digamma2[i] + sum(digamma1[:i-1]) - sum(digamma12[:i]) for i in range(k)])
+    lqs[0] = digamma2[0] - digamma12[0] # dumb indexing fix
+    q_partition = logsumexp(lqs)
+    qs = np.exp(lqs - q_partition)
+    q_tails = [qs[-1]]
+    for m in range(k-2, -1, -1):
+        q_tails.append(qs[m] + q_tails[-1])
+    q_tails.reverse()
+
+    Elogstick = np.sum(qs * digamma2)
+    Elogstick += sum([digamma1[m] * q_tails[m+1] for m in range(k-1)])
+    Elogstick += -sum([digamma12[m] * q_tails[m] for m in range(k)])
+    Elogstick += - np.sum(qs * np.log(qs))
+
+    # return
+    return qs, Elogstick
+
 def test_e_log_stick():
-    model = InfiniteIBP(10., 15, 0.1, 0.5, 36)
+    model = InfiniteIBP(4., 6, 0.1, 0.5, 36)
     model.init_z(10)
 
+    K = model.K
+
     # take a lot of samples to get something working
-    dist = Beta(model.tau[:, 0], model.tau[:, 1])
-    xes = []
-    yes = []
-    # for i in range(5):
+    dist = Beta(model.tau.detach()[:, 0], model.tau.detach()[:, 1])
     samples = dist.sample((100000,))
     f = (1. - samples.cumprod(1)).log().mean(0)
-        # xes.append(np.arange(f.shape[0]))
-        # yes.append(f)
-    log_stick = model._E_log_stick(model.tau, model.K)[0]
+    log_stick, q = model._E_log_stick(model.tau, model.K)
 
-    # import seaborn as sns
-    # from matplotlib import pyplot as plt
-    # sns.barplot(np.hstack(xes), np.hstack(yes))
-    # plt.show()
+    jeffrey_q = np.zeros((K, K))
+    jeffrey_log_stick = np.zeros((K,))
+    for k in range(K):
+        a, b = compute_q_Elogstick(model.tau.detach().numpy().T, k)
+        jeffrey_q[k, :k+1] = a
+        jeffrey_log_stick[k] = b
 
-    print(log_stick)
-    print(f)
+    print("old:     {}".format(jeffrey_log_stick))
+    print("new:     {}".format(log_stick.detach().numpy()))
+    print("samples: {}".format(f.detach().numpy()))
 
     import ipdb; ipdb.set_trace()
 
