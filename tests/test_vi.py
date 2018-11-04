@@ -160,9 +160,10 @@ def test_elbo_components(inputs=None):
 def test_cavi_updates_are_correct(inputs=None):
     """
     PASSES!
-    """
 
-    # after doing the CAVI update for a single variable, we would expect that dELBO/dv is about 0.
+    Logic:
+    After doing the CAVI update for a single variable, we would expect that dELBO/dv is about 0.
+    """
     if inputs is None:
         model = InfiniteIBP(4., 6, 0.1, 0.5, 36)
         model.init_z(10)
@@ -175,7 +176,7 @@ def test_cavi_updates_are_correct(inputs=None):
 
     optimizer = torch.optim.SGD(model.parameters(), 0.01)
 
-    # test that the updates for phi[2] is about right:
+    # CAVI update for phi, _phi_var
     k = 2
 
     model.eval()
@@ -187,7 +188,7 @@ def test_cavi_updates_are_correct(inputs=None):
     loss.backward()
 
     assert model.phi.grad[k].abs().max().item() < 1e-4, "CAVI update for phi is wrong"
-
+    assert model._phi_var.grad[k].abs().max().item() < 1e-4, "CAVI update for phi_var is wrong"
     optimizer.zero_grad()
 
     # CAVI update for nu
@@ -204,6 +205,22 @@ def test_cavi_updates_are_correct(inputs=None):
     loss.backward()
 
     assert model._nu.grad[n][k].abs().max().item() < 1e-4, "CAVI update for nu is wrong"
+    optimizer.zero_grad()
+
+    # CAVI update for tau
+    k = 1
+    model.eval()
+    _, q = model._E_log_stick(model.tau, model.K)
+    model.cavi_tau(k, X, q)
+
+    # # compute the ELBO
+    model.train()
+    optimizer.zero_grad()
+    loss = model.elbo(X)
+    loss.backward()
+
+    print(model._tau.grad)
+    assert model._tau.grad[k].abs().max().item() < 1e-4, "CAVI update for tau is wrong"
 
 def compute_q_Elogstick( tau , k ):
     import numpy as np

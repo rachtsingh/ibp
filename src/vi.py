@@ -65,7 +65,7 @@ class InfiniteIBP(object):
 
     @property
     def tau(self):
-        return 0.5 + nn.Softplus()(self._tau)
+        return nn.Softplus()(self._tau)
 
     @property
     def nu(self):
@@ -139,27 +139,7 @@ class InfiniteIBP(object):
         q = q.detach()
 
         # each vector should be size (K,)
-        # let's do this nonvectorized to start
         torch_e_logstick = torch.zeros(K)
-
-        # this is really slow and can be vectorized
-        # for k in range(K):
-        #     val = 0
-        #     for m in range(k + 1):
-        #         val += q[k][m] * digamma(tau[m, 1])
-        #     for m in range(k):
-        #         q_sum = 0
-        #         for n in range(m + 1, k + 1):
-        #             q_sum += q[k][n]
-        #         val += q_sum * digamma(tau[m, 0])
-        #     for m in range(k + 1):
-        #         q_sum = 0
-        #         for n in range(m, k + 1):
-        #             q_sum += q[k][n]
-        #         val -= q_sum * digamma(tau[m, 0] + tau[m, 1])
-        #     for m in range(k + 1):
-        #         val -= q[k][m] * (q[k][m] + EPS).log()
-        #     torch_e_logstick[k] += val
 
         # this is the faster vectorized version
         for k in range(K):
@@ -169,11 +149,6 @@ class InfiniteIBP(object):
             val += (row_q * (digamma(tau[:k + 1, 0]).cumsum(0) - digamma(tau[:k + 1, 0]))).sum()
             val -= (row_q * (digamma(tau[:k + 1].sum(1)).cumsum(0))).sum()
             val -= (row_q * (row_q + EPS).log()).sum()
-            # if k == 1:
-            #     print('a', (row_q * digamma(tau[:k + 1, 1])).sum().item())
-            #     print('b', (row_q * (digamma(tau[:k + 1, 0]).cumsum(0) - digamma(tau[:k + 1, 0]))).sum().item())
-            #     print('c', (row_q * (digamma(tau[:k + 1].sum(1)).cumsum(0))).sum().item())
-            #     print('d', (row_q * (row_q + EPS).log()).sum().item())
             torch_e_logstick[k] += val
 
         return torch_e_logstick, q
@@ -274,7 +249,8 @@ class InfiniteIBP(object):
     def cavi_phi(self, k, X):
         N, K, D = X.shape[0], self.K, self.D
         precision = (1./(self.sigma_a ** 2) + self.nu[:, k].sum()/(self.sigma_n**2))
-        self.phi_var[k] = torch.ones(self.D) / precision
+        self._phi_var[k] = ((torch.ones(self.D) / precision).exp() - 1. + EPS).log()
+
         s = (self.nu[:, k].view(N, 1) * (X - (self.nu @ self.phi - torch.ger(self.nu[:, k], self.phi[k])))).sum(0)
         self.phi[k] = s/((self.sigma_n ** 2) * precision)
 
@@ -290,9 +266,9 @@ class InfiniteIBP(object):
 
     def cavi_tau(self, k, X, q):
         N, K, D = X.shape[0], self.K, self.D
-        self.tau[k][0] = self.alpha + self.nu[:, k:].sum() + \
-            ((N - self.nu.sum(0)) * q[:, k+1:].sum(1))[k+1:].sum()
-        self.tau[k][1] = 1 + ((N - self.nu.sum(0)) * q[:, k])[k:].sum()
+        self._tau[k][0] = ((self.alpha + self.nu[:, k:].sum() + \
+            ((N - self.nu.sum(0)) * q[:, k+1:].sum(1))[k+1:].sum()).exp() - 1. + EPS).log()
+        self._tau[k][1] = ((1 + ((N - self.nu.sum(0)) * q[:, k])[k:].sum()).exp() - 1. + EPS).log()
 
     def cavi(self, X):
         """
