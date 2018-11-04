@@ -286,7 +286,7 @@ class InfiniteIBP(object):
         other_prod = (self.nu[n] @ self.phi - self.nu[n, k] * self.phi[k])
         second_term = (-1. / (2 * self.sigma_n ** 2) * (self.phi_var[k].sum() + self.phi[k].pow(2).sum())) + \
             (self.phi[k] @ (X[n] - other_prod)) / (self.sigma_n ** 2)
-        self.nu[n][k] = nn.Sigmoid()(first_term + second_term)
+        self._nu[n][k] = first_term + second_term
 
     def cavi_tau(self, k, X, q):
         N, K, D = X.shape[0], self.K, self.D

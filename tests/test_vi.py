@@ -159,7 +159,7 @@ def test_elbo_components(inputs=None):
 
 def test_cavi_updates_are_correct(inputs=None):
     """
-    DOES NOT PASS: for nu, works for phi
+    PASSES!
     """
 
     # after doing the CAVI update for a single variable, we would expect that dELBO/dv is about 0.
@@ -176,22 +176,24 @@ def test_cavi_updates_are_correct(inputs=None):
     optimizer = torch.optim.SGD(model.parameters(), 0.01)
 
     # test that the updates for phi[2] is about right:
-    # k = 2
+    k = 2
 
-    # model.eval()
-    # model.cavi_phi(k, X)
+    model.eval()
+    model.cavi_phi(k, X)
 
-    # model.train()
-    # optimizer.zero_grad()
-    # loss = model.elbo(X)
-    # loss.backward()
+    model.train()
+    optimizer.zero_grad()
+    loss = model.elbo(X)
+    loss.backward()
 
-    # assert model.phi.grad[k].abs().max().item() < 1e-4, "CAVI update for phi is wrong"
+    assert model.phi.grad[k].abs().max().item() < 1e-4, "CAVI update for phi is wrong"
+
+    optimizer.zero_grad()
 
     # CAVI update for nu
-    k = 2
-    n = 1
-    # model.eval()
+    k = 3
+    n = 2
+    model.eval()
     log_stick, _ = model._E_log_stick(model.tau, model.K)
     model.cavi_nu(n, k, X, log_stick)
 
@@ -201,8 +203,7 @@ def test_cavi_updates_are_correct(inputs=None):
     loss = model.elbo(X)
     loss.backward()
 
-    print(model._nu.grad)
-    # assert model._nu.grad[n][k].abs().max().item() < 1e-4, "CAVI update for nu is wrong"
+    assert model._nu.grad[n][k].abs().max().item() < 1e-4, "CAVI update for nu is wrong"
 
 def compute_q_Elogstick( tau , k ):
     import numpy as np
