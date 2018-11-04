@@ -2,7 +2,6 @@ from graphviz import Digraph
 import torch
 import numpy as np
 from torch.autograd import Variable, Function
-import seaborn as sns
 
 def visualize_A(A):
     """
@@ -34,6 +33,7 @@ def visualize_A_save(A, iter):
     plt.savefig("features_{}.png".format(iter), dpi=300)
 
 def visualize_nu_save(nu, iter):
+    import seaborn as sns
     from matplotlib import pyplot as plt
     from matplotlib.pyplot import subplots
     plt.figure()
@@ -99,14 +99,3 @@ def register_hooks(var):
         return dot
 
     return make_dot
-
-if __name__ == '__main__':
-    x = Variable(torch.randn(10, 10), requires_grad=True)
-    y = Variable(torch.randn(10, 10), requires_grad=True)
-
-    z = x / (y * 0)
-    z = z.sum() * 2
-    get_dot = register_hooks(z)
-    z.backward()
-    dot = get_dot()
-    dot.save('tmp.dot')

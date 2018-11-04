@@ -5,12 +5,9 @@ from torch import digamma
 from torch.distributions import MultivariateNormal as MVN
 from torch.distributions import Bernoulli as Bern
 
-from matplotlib import pyplot as plt
-
 # relative path import hack
 import sys, os
 sys.path.insert(0, os.path.abspath('..'))
-
 
 # inside-package imports below here
 from src.vi import InfiniteIBP
@@ -47,6 +44,8 @@ def show_that_ADVI_init_doesnt_matter():
     visualize_nu_save(model.nu.detach().numpy(), 1000)
 
 def find_a_better_scheme():
+    from matplotlib import pyplot as plt
+
     SCALE = 1.
 
     N = 500

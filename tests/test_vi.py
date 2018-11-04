@@ -238,7 +238,7 @@ def compute_q_Elogstick( tau , k ):
 
 def test_e_log_stick():
     """
-    This test DOES NOT PASS
+    This test DOES NOT PASS, and maybe should not
     """
     model = InfiniteIBP(4., 10, 0.1, 0.5, 36)
     model.init_z(10)

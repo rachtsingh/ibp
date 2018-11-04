@@ -284,7 +284,7 @@ class InfiniteIBP(object):
             log_stick[k]
         # this line is really slow
         other_prod = (self.nu[n] @ self.phi - self.nu[n, k] * self.phi[k])
-        second_term = (-0.5 / (self.sigma_n ** 2) * (self.phi_var[k].sum() + self.phi[k].pow(2).sum())) + \
+        second_term = (-1. / (2 * self.sigma_n ** 2) * (self.phi_var[k].sum() + self.phi[k].pow(2).sum())) + \
             (self.phi[k] @ (X[n] - other_prod)) / (self.sigma_n ** 2)
         self.nu[n][k] = nn.Sigmoid()(first_term + second_term)
 
