@@ -57,6 +57,13 @@ class InfiniteIBP(object):
     def init_z(self, N=100):
         self._nu = torch.rand(N, self.K)
 
+    # For Variational Tempering
+    def init_r_and_T(self,N,M):
+        self.M = M
+        self._r = nn.Parameter(torch.rand(N,self.M))
+        self.T = torch.arange(1,self.M+1.0)
+        print("T IS",self.T)
+
     """
     Note we use the following trick for sweeping the constraint parametrization
     'under the rug' so to speak - whenever we access self.tau, we get the
@@ -75,11 +82,21 @@ class InfiniteIBP(object):
     def phi_var(self):
         return nn.Softplus()(self._phi_var)
 
+    # For Variational Tempering
+    @property
+    def r(self):
+        return nn.Softmax(dim=1)(self._r)
+
     def train(self):
         self._tau.requires_grad = True
         self.phi.requires_grad = True
         self._phi_var.requires_grad = True
         self._nu.requires_grad = True
+
+        # For Variational Tempering
+        if hasattr(self, '_r'):
+            self._r.requires_grad = True
+
 
     def eval(self):
         self._tau.requires_grad = False
@@ -87,10 +104,21 @@ class InfiniteIBP(object):
         self._phi_var.requires_grad = False
         self._nu.requires_grad = False
 
-    def parameters(self):
+        # For Variational Tempering
+        if hasattr(self, '_r'):
+            self._r.requires_grad = False
+
+    def parameters(self,tempering=False):
         if not self._tau.requires_grad:
             print("WARNING: calling .parameters() but no grad required! Watch out (maybe call .train())")
-        return [self._tau, self.phi, self._phi_var, self._nu]
+
+        # For Variational Tempering
+        if tempering:
+            params = [self._tau, self.phi, self._phi_var, self._nu, self._r]
+        else:
+            params = [self._tau, self.phi, self._phi_var, self._nu]
+
+        return params
 
     def elbo(self, X):
         """
@@ -103,6 +131,23 @@ class InfiniteIBP(object):
         d = self._4_likelihood(X, self.nu, self.phi_var, self.phi).sum()
         e = self._5_entropy(self.tau, self.phi_var, self.nu).sum()
         return a + b + c + d + e
+
+    # For Variational Tempering
+    def elbo_tempered(self, X):
+        """
+        This is the evidence lower bound evaluated at X, when X is of shape (N, D)
+        i.e. log p_K(X | theta) geq ELBO
+        """
+        probs = torch.ones(self.M) / self.M
+        E_q_logp_y =  -1.0*torch.mul(self.r,probs.log()).sum()
+        q_y = torch.distributions.Categorical(self.r)
+
+        a = self._1_feature_prob(self.tau).sum()
+        b = self._2_feature_assign(self.nu, self.tau).sum()
+        c = self._3_feature_prob(self.phi_var, self.phi).sum()
+        d_tempered = self._4_likelihood_tempered(X,self.nu,self.phi_var,self.phi).sum()
+        e = self._5_entropy(self.tau, self.phi_var, self.nu).sum()
+        return a + b + c + d_tempered + e + E_q_logp_y + q_y.entropy().sum()
 
     def _1_feature_prob(self, tau):
         """
@@ -214,6 +259,47 @@ class InfiniteIBP(object):
 
         return constant + nonconstant
 
+
+    # For Variational Tempering
+    def _4_likelihood_tempered(self, X, nu, phi_var, phi):
+        """
+        @param X: (N, D)
+        @param nu: (N, K)
+        @param phi_var: (K, D)
+        @param phi: (K, D)
+        @return: ()
+
+        Computes Likelihood: E_q(Z),q(A) [logp(X_n|Z_n,A,sigma_n^2 I)]
+        Same as Finite Approach
+        """
+        N, _ = X.shape
+        K, D = self.K, self.D # for notational simplicity
+        ret = 0
+        constant = -0.5 * D * (self.sigma_n.log() + LOG_2PI)
+
+        temps = self.r@self.T
+
+        first_term = X.pow(2).sum()
+        second_term = (-2 * (nu.view(N, K, 1) * phi.view(1, K, D)) * X.view(N, 1, D))
+        second_term = second_term.sum(dim=2)
+        second_term = second_term.sum(dim=1) 
+        second_term = torch.mul(temps,second_term).sum()
+
+        third_term = 2 * torch.triu((phi @ phi.transpose(0, 1)) * \
+                (nu.transpose(0, 1) @ nu), diagonal=1).sum()
+
+        # have to loop because of torch.trace again
+        fourth_term = 0
+        for k in range(K):
+            fourth_term += (nu[:, k] * (phi_var[k].sum() + phi[k].pow(2).sum())).sum()
+
+        nonconstant = (-0.5/(self.sigma_n**2)) * \
+            (first_term + second_term + third_term + fourth_term)
+
+        return constant + nonconstant
+
+
+
     @staticmethod
     def _entropy_q_v(tau):
         return ((tau.lgamma().sum(1) - tau.sum(1).lgamma()) - \
@@ -311,7 +397,7 @@ def fit_infinite_to_ggblocks_cavi():
 
     visualize_A(model.phi.detach().numpy())
 
-def fit_infinite_to_ggblocks_advi_exact():
+def fit_infinite_to_ggblocks_advi_exact(tempering=False):
     # used to debug infs
     from tests.test_vi import test_elbo_components, test_q_E_logstick
 
@@ -325,15 +411,25 @@ def fit_infinite_to_ggblocks_advi_exact():
     model.phi.data[:4] = SCALE * gg_blocks()
     visualize_A(model.phi.detach().numpy())
     model.init_z(N)
+
+    if tempering:
+        M = 10
+        model.init_r_and_T(N,M)
+
     model.train()
 
-    optimizer = torch.optim.Adam(model.parameters(), 0.01)
+    optimizer = torch.optim.Adam(model.parameters(tempering=tempering), 0.01)
 
     plots = np.zeros((1000, 6, 36))
 
     for i in range(1000):
         optimizer.zero_grad()
-        loss = -model.elbo(X)
+        loss = 0.0
+        if tempering:
+            loss = -model.elbo_tempered(X)
+        else:
+            loss = -model.elbo(X)
+
         print("[Epoch {:<3}] ELBO = {:.3f}".format(i + 1, -loss.item()))
         loss.backward()
         optimizer.step()
@@ -351,5 +447,6 @@ if __name__ == '__main__':
     """
     python src/vi.py will just check that the model works on a ggblocks dataset
     """
-    fit_infinite_to_ggblocks_cavi()
-    # fit_infinite_to_ggblocks_advi_exact()
+    #fit_infinite_to_ggblocks_cavi()
+    fit_infinite_to_ggblocks_advi_exact()
+    #fit_infinite_to_ggblocks_advi_exact(tempering=True)
