@@ -65,7 +65,7 @@ class InfiniteIBP(object):
 
     @property
     def tau(self):
-        return nn.Softplus()(self._tau)
+        return 0.5 + nn.Softplus()(self._tau)
 
     @property
     def nu(self):
@@ -267,8 +267,8 @@ class InfiniteIBP(object):
     def cavi_tau(self, k, X, q):
         N, K, D = X.shape[0], self.K, self.D
         self._tau[k][0] = inverse_softplus(self.alpha + self.nu[:, k:].sum() + \
-            ((N - self.nu.sum(0)) * q[:, k+1:].sum(1))[k+1:].sum())
-        self._tau[k][1] = inverse_softplus(1 + ((N - self.nu.sum(0)) * q[:, k])[k:].sum())
+            ((N - self.nu.sum(0)) * q[:, k+1:].sum(1))[k+1:].sum() - 0.5)
+        self._tau[k][1] = inverse_softplus(1 + ((N - self.nu.sum(0)) * q[:, k])[k:].sum() - 0.5)
 
     def cavi(self, X):
         """

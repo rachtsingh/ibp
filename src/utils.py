@@ -43,7 +43,7 @@ def visualize_nu_save(nu, iter):
     plt.savefig("nu_{}.png".format(iter), dpi=300)
 
 def inverse_softplus(x):
-    return (x.exp() - 1 + EPS).log()
+    return x + (1. - (-1. * x).exp() + EPS).log()
 
 def iter_graph(root, callback):
     queue = [root]
