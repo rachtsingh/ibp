@@ -46,8 +46,12 @@ def show_that_ADVI_init_doesnt_matter():
 def find_a_better_scheme(tempering=False):
     from matplotlib import pyplot as plt
 
-    SCALE = 1.
-
+    RESET = False
+    if RESET:
+        print("Using nu resets")
+    else:
+        print("Not using nu resets")
+    
     N = 500
     X = generate_gg_blocks_dataset(N, 0.05)
 
@@ -55,6 +59,7 @@ def find_a_better_scheme(tempering=False):
     model.init_z(N)
 
     if tempering:
+        print("initing tempering params")
         M = 10
         model.init_r_and_T(N,M)
 
@@ -64,6 +69,7 @@ def find_a_better_scheme(tempering=False):
     visualize_nu_save(model.nu.detach().numpy(), 0)
 
     if tempering:
+        print("Initing optimizer with tempering params included")
         optimizer = torch.optim.Adam([{'params': [model._nu, model._tau, model._r]},
                                   {'params': [model._phi_var, model.phi], 'lr': 0.003}], lr=0.1)
     else:
@@ -79,7 +85,6 @@ def find_a_better_scheme(tempering=False):
             elbo = model.elbo(X)
             loss = -elbo
             if tempering:
-                print('here')
                 loss = -model.elbo_tempered(X)
 
             print("[Epoch {:<3}] ELBO = {:.3f}".format(i + 1, elbo.item()))
@@ -89,11 +94,12 @@ def find_a_better_scheme(tempering=False):
 
             iter_count += 1
             assert loss.item() != np.inf, "loss is inf"
-            elbo_array.append(-elbo.item())
+            elbo_array.append(elbo.item())
 
         visualize_A_save(model.phi.detach().numpy(), iter_count)
         visualize_nu_save(model.nu.detach().numpy(), iter_count)
-        #model._nu.data = torch.randn(model._nu.shape)
+        if RESET:
+            model._nu.data = torch.randn(model._nu.shape)
 
     plt.plot(np.arange(len(elbo_array)), np.array(elbo_array))
     plt.show()
@@ -154,5 +160,5 @@ def freeze_A_to_solution_and_fit():
     import ipdb; ipdb.set_trace()
 
 if __name__ == '__main__':
-    find_a_better_scheme(tempering=False)
-    #find_a_better_scheme(tempering=True)
+    #find_a_better_scheme(tempering=False)
+    find_a_better_scheme(tempering=True)

@@ -62,7 +62,7 @@ class InfiniteIBP(object):
         self.M = M
         self._r = nn.Parameter(torch.rand(N,self.M))
         self.T = torch.arange(1,self.M+1.0)
-        print("T IS",self.T)
+        print("Possible Temperatures are:",self.T)
 
     """
     Note we use the following trick for sweeping the constraint parametrization
@@ -95,6 +95,7 @@ class InfiniteIBP(object):
 
         # For Variational Tempering
         if hasattr(self, '_r'):
+            print("model._r requires grad True")
             self._r.requires_grad = True
 
 
@@ -138,16 +139,22 @@ class InfiniteIBP(object):
         This is the evidence lower bound evaluated at X, when X is of shape (N, D)
         i.e. log p_K(X | theta) geq ELBO
         """
+        
+        # Cross entropy between variational distributions over temperatures
+        # versus prior over temperatures (prior is uniform categorical)
         probs = torch.ones(self.M) / self.M
-        E_q_logp_y =  -1.0*torch.mul(self.r,probs.log()).sum()
+        temp_cross_entropy_q_p =  -1.0*torch.mul(self.r,probs.log()).sum()
+        
+        # Entropy of variational distribution over temperature
         q_y = torch.distributions.Categorical(self.r)
+        temp_entropy_q = q_y.entropy().sum()
 
         a = self._1_feature_prob(self.tau).sum()
         b = self._2_feature_assign(self.nu, self.tau).sum()
         c = self._3_feature_prob(self.phi_var, self.phi).sum()
         d_tempered = self._4_likelihood_tempered(X,self.nu,self.phi_var,self.phi).sum()
         e = self._5_entropy(self.tau, self.phi_var, self.nu).sum()
-        return a + b + c + d_tempered + e + E_q_logp_y + q_y.entropy().sum()
+        return a + b + c + d_tempered + e + temp_cross_entropy_q_p + temp_entropy_q 
 
     def _1_feature_prob(self, tau):
         """
@@ -277,12 +284,20 @@ class InfiniteIBP(object):
         ret = 0
         constant = -0.5 * D * (self.sigma_n.log() + LOG_2PI)
 
+        # NOTE: The M possible annealing temperatures are in self.T
+        # Each datapoint has a variational categorical distribution over
+        # the possible temperatures, hence self.r is NxM. Each datapoint's
+        # likelihood is weighed by the expectation over possible temperatures
+        # with respect to that datapoint's categorical distribution, self.r[i]
         temps = self.r@self.T
 
         first_term = X.pow(2).sum()
         second_term = (-2 * (nu.view(N, K, 1) * phi.view(1, K, D)) * X.view(N, 1, D))
         second_term = second_term.sum(dim=2)
         second_term = second_term.sum(dim=1) 
+        # NOTE: This is where I weigh each datapoint's likelihood by its annealing factor.
+        # I do this here but it was the most clear place in this vectorized whole-data likelihood term
+        # where there were N terms (clearly one corresponding to each datapoint)
         second_term = torch.mul(temps,second_term).sum()
 
         third_term = 2 * torch.triu((phi @ phi.transpose(0, 1)) * \
