@@ -43,24 +43,37 @@ def show_that_ADVI_init_doesnt_matter():
     visualize_A_save(model.phi.detach().numpy(), 1000)
     visualize_nu_save(model.nu.detach().numpy(), 1000)
 
-def find_a_better_scheme(tempering=False):
+def find_a_better_scheme(nu_resets=False,tempering=False):
     from matplotlib import pyplot as plt
 
-    RESET = False
-    if RESET:
-        print("Using nu resets")
-    else:
-        print("Not using nu resets")
-    
-    N = 500
-    X = generate_gg_blocks_dataset(N, 0.05)
+    print("")
+    print("")
+    print("")
+    print("NU RESETS:",nu_resets)        
+    print("TEMPERING:",tempering)
 
-    model = InfiniteIBP(1.5, 6, 0.1, 0.05, 36)
+    N = 500
+    sigma_n = 0.05
+    print("DATA SIZE:",N)
+    print("DATA NOISE:",sigma_n)
+    X = generate_gg_blocks_dataset(N, sigma_n)
+
+    alpha=1.5
+    K = 6
+    D = 36
+    sigma_a = 0.1
+    print("ALPHA:",alpha)
+    print("K:",K)
+    print("SIGMA N:",sigma_n)
+    print("SIGMA A:",sigma_a)
+
+    model = InfiniteIBP(alpha, K, sigma_a, sigma_n, D)
     model.init_z(N)
 
     if tempering:
-        print("initing tempering params")
+        print("INIT TEMPERING PARAMS")
         M = 10
+        print("NUM TEMPERATURES:",M)
         model.init_r_and_T(N,M)
 
     model.train()
@@ -98,7 +111,8 @@ def find_a_better_scheme(tempering=False):
 
         visualize_A_save(model.phi.detach().numpy(), iter_count)
         visualize_nu_save(model.nu.detach().numpy(), iter_count)
-        if RESET:
+        
+        if nu_resets:
             model._nu.data = torch.randn(model._nu.shape)
 
     plt.plot(np.arange(len(elbo_array)), np.array(elbo_array))
@@ -160,5 +174,8 @@ def freeze_A_to_solution_and_fit():
     import ipdb; ipdb.set_trace()
 
 if __name__ == '__main__':
-    #find_a_better_scheme(tempering=False)
-    find_a_better_scheme(tempering=True)
+    
+    TEMPERING = False
+    NU_RESETS = False
+    find_a_better_scheme(nu_resets=NU_RESETS,tempering=TEMPERING) 
+   
