@@ -296,7 +296,7 @@ class InfiniteIBP(object):
         # likelihood is weighed by the expectation over possible temperatures
         # with respect to that datapoint's categorical distribution, self.r[i]
         temps = self.r@self.T
-        inverse_temps = 1.0/temps
+        inverse_temps = 1.0/(temps + EPS)
 
         first_term = X.pow(2).sum()
         second_term = (-2 * (nu.view(N, K, 1) * phi.view(1, K, D)) * X.view(N, 1, D))
