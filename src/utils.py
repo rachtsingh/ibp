@@ -3,6 +3,8 @@ import torch
 import numpy as np
 from torch.autograd import Variable, Function
 
+EPS = 1e-16
+
 def visualize_A(A):
     """
     Assume that A can be reshaped into 6 (6, 6) images
@@ -39,6 +41,9 @@ def visualize_nu_save(nu, iter):
     plt.figure()
     sns.distplot(nu.reshape((-1,)), kde=False)
     plt.savefig("nu_{}.png".format(iter), dpi=300)
+
+def inverse_softplus(x):
+    return (x.exp() - 1 + EPS).log()
 
 def iter_graph(root, callback):
     queue = [root]

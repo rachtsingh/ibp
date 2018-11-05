@@ -5,7 +5,7 @@ from torch import digamma
 from torch.distributions import MultivariateNormal as MVN
 from torch.distributions import Bernoulli as Bern
 
-from .utils import register_hooks, visualize_A
+from .utils import register_hooks, visualize_A, inverse_softplus
 from .data import generate_gg_blocks, generate_gg_blocks_dataset, gg_blocks
 
 # relative path import hack
@@ -249,7 +249,7 @@ class InfiniteIBP(object):
     def cavi_phi(self, k, X):
         N, K, D = X.shape[0], self.K, self.D
         precision = (1./(self.sigma_a ** 2) + self.nu[:, k].sum()/(self.sigma_n**2))
-        self._phi_var[k] = ((torch.ones(self.D) / precision).exp() - 1. + EPS).log()
+        self._phi_var[k] = inverse_softplus(torch.ones(self.D) / precision)
 
         s = (self.nu[:, k].view(N, 1) * (X - (self.nu @ self.phi - torch.ger(self.nu[:, k], self.phi[k])))).sum(0)
         self.phi[k] = s/((self.sigma_n ** 2) * precision)
@@ -266,9 +266,9 @@ class InfiniteIBP(object):
 
     def cavi_tau(self, k, X, q):
         N, K, D = X.shape[0], self.K, self.D
-        self._tau[k][0] = ((self.alpha + self.nu[:, k:].sum() + \
-            ((N - self.nu.sum(0)) * q[:, k+1:].sum(1))[k+1:].sum()).exp() - 1. + EPS).log()
-        self._tau[k][1] = ((1 + ((N - self.nu.sum(0)) * q[:, k])[k:].sum()).exp() - 1. + EPS).log()
+        self._tau[k][0] = inverse_softplus(self.alpha + self.nu[:, k:].sum() + \
+            ((N - self.nu.sum(0)) * q[:, k+1:].sum(1))[k+1:].sum())
+        self._tau[k][1] = inverse_softplus(1 + ((N - self.nu.sum(0)) * q[:, k])[k:].sum())
 
     def cavi(self, X):
         """
