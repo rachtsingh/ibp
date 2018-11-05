@@ -59,6 +59,10 @@ class InfiniteIBP(object):
 
     # For Variational Tempering
     def init_r_and_T(self,N,M):
+        # M = num temperatures
+        # As is, T is just 1...M
+        # Each datapoint has self._r[i], a distribution
+        # over the M temperatures
         self.M = M
         self._r = nn.Parameter(torch.rand(N,self.M))
         self.T = torch.arange(1,self.M+1.0)
@@ -85,6 +89,8 @@ class InfiniteIBP(object):
     # For Variational Tempering
     @property
     def r(self):
+        # So each datapoint has a normalized
+        # Categorical distribution
         return nn.Softmax(dim=1)(self._r)
 
     def train(self):
@@ -290,6 +296,7 @@ class InfiniteIBP(object):
         # likelihood is weighed by the expectation over possible temperatures
         # with respect to that datapoint's categorical distribution, self.r[i]
         temps = self.r@self.T
+        inverse_temps = 1.0/temps
 
         first_term = X.pow(2).sum()
         second_term = (-2 * (nu.view(N, K, 1) * phi.view(1, K, D)) * X.view(N, 1, D))
@@ -298,7 +305,7 @@ class InfiniteIBP(object):
         # NOTE: This is where I weigh each datapoint's likelihood by its annealing factor.
         # I do this here but it was the most clear place in this vectorized whole-data likelihood term
         # where there were N terms (clearly one corresponding to each datapoint)
-        second_term = torch.mul(temps,second_term).sum()
+        second_term = torch.mul(inverse_temps,second_term).sum()
 
         third_term = 2 * torch.triu((phi @ phi.transpose(0, 1)) * \
                 (nu.transpose(0, 1) @ nu), diagonal=1).sum()
