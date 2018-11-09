@@ -9,11 +9,27 @@ from torch.distributions import Bernoulli as Bern
 import sys, os
 sys.path.insert(0, os.path.abspath('..'))
 
-
 # inside-package imports below here
 from src.vi import InfiniteIBP
 from src.utils import register_hooks, visualize_A, visualize_A_save, visualize_nu_save
 from src.data import generate_gg_blocks, generate_gg_blocks_dataset, gg_blocks
+
+def check_that_naive_doesnt_work():
+    N = 500
+    X = generate_gg_blocks_dataset(N, 0.05)
+
+    model = InfiniteIBP(1.5, 6, 0.1, 0.05, 36)
+    model.init_z(N)
+    model.eval()
+
+    for i in range(100):
+        if i % 5 == 0:
+            visualize_A_save(model.phi.detach().numpy(), i)
+        if (i + 1) % 10 == 0:
+            model._nu.data = torch.randn(model._nu.shape)
+
+        model.cavi(X)
+        print("[Epoch {:<3}] ELBO = {:.3f}".format(i + 1, model.elbo(X).item()))
 
 def find_a_better_scheme():
     SCALE = 1.
@@ -84,4 +100,4 @@ def freeze_A_to_solution_and_fit():
     import ipdb; ipdb.set_trace()
 
 if __name__ == '__main__':
-    freeze_A_to_solution_and_fit()
+    check_that_naive_doesnt_work()
