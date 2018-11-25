@@ -306,29 +306,30 @@ class UncollapsedGibbsIBP(nn.Module):
         return self.left_order_form(Z)
 
     def trim_ZA(self,Z,A):
-        N,K = Z.size()
-        sums = Z.sum(dim=0)
-        to_keep = sums > 0
-        return Z[:,to_keep],A[to_keep,:]
+        to_keep = Z.sum(dim=0) > 0
+        return Z[:, to_keep], A[to_keep, :]
 
     def gibbs(self, X, iters):
-        N = X.size()[0]
-        D = X.size()[1]
+        N, D = X.size()
         K = self.K
+
         Z = self.init_Z(N)
         A = self.init_A(K,D)
+
         As = []
         Zs = []
+
         for iteration in range(iters):
-            print('iter:',iteration)
-            A = self.resample_A(X,Z)
-            Z,A = self.resample_Z(X,Z,A)
-            Z,A = self.trim_ZA(Z,A)
-            A_numpy = A.clone().numpy()
-            Z_numpy = Z.clone().numpy()
-            As.append(A_numpy)
-            Zs.append(Z_numpy)
-            print("Z shape is",Z.size())
+            # Gibbs resampling
+            A = self.resample_A(X, Z)
+            Z, A = self.resample_Z(X, Z, A)
+
+            # cleanup
+            Z, A = self.trim_ZA(Z, A)
+
+            # save the samples to the chain
+            As.append(A.clone().numpy())
+            Zs.append(Z.clone().numpy())
         return As,Zs
 
 

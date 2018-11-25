@@ -195,6 +195,13 @@ class InfiniteIBP(object):
         assert (q.sum(1) - torch.ones(K)).abs().max().item() < 1e-6, "WTF normalize didn't work"
         q = q.detach()
 
+        torch_e_logstick = InfiniteIBP._E_log_stick_from_q(q, tau)
+        return torch_e_logstick, q
+
+    @staticmethod
+    def _E_log_stick_from_q(q, tau):
+        K = q.size()[0]
+
         # each vector should be size (K,)
         torch_e_logstick = torch.zeros(K)
 
@@ -207,8 +214,7 @@ class InfiniteIBP(object):
             val -= (row_q * (digamma(tau[:k + 1].sum(1)).cumsum(0))).sum()
             val -= (row_q * (row_q + EPS).log()).sum()
             torch_e_logstick[k] += val
-
-        return torch_e_logstick, q
+        return torch_e_logstick
 
     def _2_feature_assign(self, nu, tau):
         """
@@ -319,8 +325,6 @@ class InfiniteIBP(object):
 
         return constant + nonconstant
 
-
-
     @staticmethod
     def _entropy_q_v(tau):
         return ((tau.lgamma().sum(1) - tau.sum(1).lgamma()) - \
@@ -374,8 +378,25 @@ class InfiniteIBP(object):
     def cavi_tau(self, k, X, q):
         N, K, D = X.shape[0], self.K, self.D
         self._tau[k][0] = inverse_softplus(self.alpha + self.nu[:, k:].sum() + \
-            ((N - self.nu.sum(0)) * q[:, k+1:].sum(1))[k+1:].sum() - 0.5)
+            ((N - self.nu.sum(0)) * (q[:, k+1:].sum(1)))[k+1:].sum() - 0.5)
         self._tau[k][1] = inverse_softplus(1 + ((N - self.nu.sum(0)) * q[:, k])[k:].sum() - 0.5)
+
+    def slow_cavi_tau(self, k, X, q):
+        N, K, D = X.shape[0], self.K, self.D
+        
+        # update the first term
+        val_0 = 0.
+        val_0 += self.alpha
+        for m in range(k, K):
+            for n in range(N):
+                val_0 += self.nu[n, m]
+        for m in range(k + 1, K):
+            s = N - self.nu[:, m].sum()
+            a = 0.
+            for i in range(k + 1, m + 1):
+                a += q[m, i]
+            val_0 += s * a
+        self._tau[k][0] = inverse_softplus(val_0 - 0.5)
 
     def cavi(self, X):
         """
