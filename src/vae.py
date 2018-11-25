@@ -8,13 +8,14 @@ from torch import optim
 from torch.nn import functional as F
 from .utils import register_hooks, visualize_A
 from .data import generate_gg_blocks, generate_gg_blocks_dataset, gg_blocks
+from .vi import InfiniteIBP
 
 import sys
 
 LOG_2PI = 1.8378770664093453
 EPS = 1e-16
 
-class InfiniteIBP_VAE(nn.Module):
+class InfiniteIBP_VAE(InfiniteIBP):
     """
     Infinite/Non-Truncated Indian Buffet Process
     with a mean-field variational posterior approximation.
@@ -29,60 +30,51 @@ class InfiniteIBP_VAE(nn.Module):
 
     q(v_k) = Beta(v_k;tau_k1,tau_k2 (now over v rather than pi)
     q(A_k) = Normal(A_k;phi_k,phi_var_k)
-    q(z_nk) = Bernoulli(z_nk; nu_nk)
+    q(z_nk) = Bernoulli(z_nk; nu_nk(x))
 
     In truncated stick breaking for the infinite model,
     pi_k = product_{i=1}^k v_i for k <= K and zero otherwise.
 
     NOTE: must call init_z with a given N to start.
     """
-    def __init__(self, alpha, K, sigma_a, sigma_n, D):
-        super(InfiniteIBP_VAE, self).__init__()
-
-        # idempotent - all are constant and have requires_grad=True
-        self.alpha = torch.tensor(alpha)
-        self.K = torch.tensor(K)
-        self.sigma_a = torch.tensor(sigma_a)
-        self.sigma_n = torch.tensor(sigma_n)
-        self.D = torch.tensor(D)
-
-        # we don't know N, but we'll still initialize everything else
-        self.init_variables()
-
     def init_variables(self):
-        # NOTE: tau must be positive, so we use the @property below
-        self._tau = nn.Parameter(torch.rand(self.K, 2))
-        self.phi = nn.Parameter(torch.randn(self.K, self.D) * self.sigma_a)
-        self._phi_var = nn.Parameter(torch.zeros(self.K, self.D) - 2.)
-
-        self.nu = nn.Sequential(
-                    nn.Linear(self.D, 400),
-                    nn.ReLU(),
-                    nn.Linear(400, self.K.item()),
-                    nn.Sigmoid()
+        super(InfiniteIBP_VAE, self).init_variables()
+        self._nu = nn.Sequential(
+            nn.Linear(self.D, 400),
+            nn.ReLU(),
+            nn.Linear(400, self.K.item()),
+            nn.Sigmoid()
         )
 
-
-    """
-    Note we use the following trick for sweeping the constraint parametrization
-    'under the rug' so to speak - whenever we access self.tau, we get the
-    constrained-to-be-positive version
-    """
-
     @property
-    def tau(self):
-        return 0.5   + nn.Softplus()(self._tau)
+    def nu(self):
+        return self._nu
 
-    @property
-    def phi_var(self):
-        return nn.Softplus()(self._phi_var)
+    def train(self):
+        self._tau.requires_grad = True
+        self.phi.requires_grad = True
+        self._phi_var.requires_grad = True
+        for buffer in self.nu.parameters():
+            buffer.requires_grad = True
+    
+    def eval(self):
+        self._tau.requires_grad = False
+        self.phi.requires_grad = False
+        self._phi_var.requires_grad = False
+        for buffer in self.nu.parameters():
+            buffer.requires_grad = False
+    
+    def parameters(self):
+        if not self._tau.requires_grad:
+            print("WARNING: calling .parameters() but no grad required! Watch out (maybe call .train())")
+        ret = [buffer for buffer in self.nu.parameters()]
+        return ret + [self._tau, self.phi, self._phi_var]
 
     def elbo(self, X):
         """
         This is the evidence lower bound evaluated at X, when X is of shape (N, D)
         i.e. log p_K(X | theta) geq ELBO
         """
-
         nu = self.nu(X)
         self.most_recent_nu = nu
         a = self._1_feature_prob(self.tau).sum()
@@ -92,149 +84,39 @@ class InfiniteIBP_VAE(nn.Module):
         e = self._5_entropy(self.tau, self.phi_var, nu).sum()
         return a + b + c + d + e
 
-    def _1_feature_prob(self, tau):
-        """
-        @param tau: (K, 2)
-        @return: (K,)
+def fit_infinite_to_ggblocks_vae_exact():
+    N = 500
+    X = generate_gg_blocks_dataset(N, 0.1)
 
-        Computes Cross Entropy: E_q(v) [logp(v_k|alpha)]
-        """
-        return self.alpha.log() + \
-            ((self.alpha - 1) * (digamma(tau[:, 0]) - digamma(tau.sum(dim=1))))
+    model = InfiniteIBP(1.5, 6, 0.5, 0.5, 36)
+    model.init_z(N)
+    model.train()
 
-    @staticmethod
-    def _E_log_stick(tau, K):
-        """
-        @param tau: (K, 2)
-        @return: ((K,), (K, K))
+    optimizer = torch.optim.Adam(model.parameters(), 0.01)
 
-        where the first return value is E_log_stick, and the second is q
-        """
-        # we use the same indexing as in eq. (10)
-        q = torch.zeros(K, K)
+    T = 5000
 
-        # working in log space until the last step
-        first_term = digamma(tau[:, 1])
-        second_term = digamma(tau[:, 0]).cumsum(0) - digamma(tau[:, 0])
-        third_term = digamma(tau.sum(1)).cumsum(0)
-        q += (first_term + second_term - third_term).view(1, -1)
-        q = torch.tril(q.exp())
-        q = torch.nn.functional.normalize(q, p=1, dim=1)
-        # TODO: should we detach q? what does that do to the ADVI?
+    elbos = np.zeros(T)
+    plots = np.zeros((T, 6, 36))
 
-        assert (q.sum(1) - torch.ones(K)).abs().max().item() < 1e-6, "WTF normalize didn't work"
+    for i in range(T):
+        optimizer.zero_grad()
+        loss = -model.elbo(X)
 
-        # each vector should be size (K,)
-        # let's do this nonvectorized to start
-        torch_e_logstick = torch.zeros(K)
+        print("[Epoch {:<3}] ELBO = {:.3f}".format(i + 1, -loss.item()))
+        loss.backward()
+        optimizer.step()
 
-        # this is really slow and can be vectorized
-        for k in range(K):
-            torch_e_logstick[k] += (digamma(tau[:, 1]) * q[k]).sum()
-            torch_e_logstick[k] += ((1 - q[k].cumsum(0)) * digamma(tau[:, 0]))[:k].sum()
-            for m in range(k + 1): # m needs to be
-                torch_e_logstick[k] -= q[k][m:].sum() * digamma(tau.sum(1))[m]
-            torch_e_logstick[k] -= (q[k, :k+1] * (q[k, :k+1] + EPS).log()).sum()
-            # first = (q * digamma(tau[:, 1]).view(1, -1)).sum(1)
-            # second = ((1 - q.cumsum(1)) * tau[:, 0]).sum(1)
-            # third = ((1 - q.cumsum(1) - q) * tau.sum(1)).sum(1)
-            # temp_q = q.clone() # TODO: why clone?
-            # temp_q[q == 0] = 1. # since half of q is 0, log(1) is now a mask
-            # fourth = (temp_q * (temp_q + EPS).log()).sum(1)
-            # torch_e_logstick = first + second + third + fourth
+        plots[i] = model.phi.detach().numpy().reshape((6, 36))
+        elbos[i] = -loss.item()
 
-        return torch_e_logstick, q
+        assert loss.item() != np.inf, "loss is inf"
 
-    def _2_feature_assign(self, nu, tau):
-        """
-        @param nu: (N, K)
-        @param tau: (K, 2)
-        @return: (N, K)
+    np.save('features_vae_exact.npy', plots)
+    np.save('elbo_vae_exact.npy', elbos)
 
-        Computes Cross Entropy: E_q(v),q(Z) [logp(z_nk|v)]
-        """
-        return (nu * (digamma(tau[:,1]) - digamma(tau.sum(dim=1))).cumsum(0) + \
-            (1. - nu) * self._E_log_stick(tau, self.K)[0])
-
-    def _3_feature_prob(self, phi_var, phi):
-        """
-        @param phi_var: (K, D)
-        @param phi: (K, D)
-        @return: ()
-
-        NOTE: must return () because torch.trace doesn't allow specifying axes
-
-        Computes Cross Entropy: E_q(A) [logp(A_k|sigma_a^2 I)]
-        Same as Finite Approach
-        """
-        ret = 0
-        constant = -0.5 * self.D * (2 * self.sigma_a.log() + LOG_2PI)
-        for k in range(self.K):
-            other_term = (-0.5 / (self.sigma_a**2)) * \
-                (phi_var[k].sum() + phi[k].pow(2).sum())
-            ret += constant + other_term
-        return ret
-
-    def _4_likelihood(self, X, nu, phi_var, phi):
-        """
-        @param X: (N, D)
-        @param nu: (N, K)
-        @param phi_var: (K, D)
-        @param phi: (K, D)
-        @return: ()
-
-        Computes Likelihood: E_q(Z),q(A) [logp(X_n|Z_n,A,sigma_n^2 I)]
-        Same as Finite Approach
-        """
-        N, _ = X.shape
-        K, D = self.K, self.D # for notational simplicity
-        ret = 0
-        constant = -0.5 * D * (self.sigma_n.log() + LOG_2PI)
-
-        first_term = X.pow(2).sum()
-        second_term = (-2 * (nu.view(N, K, 1) * phi.view(1, K, D)) * X.view(N, 1, D)).sum()
-        third_term = 2 * torch.triu((phi @ phi.transpose(0, 1)) * \
-                (nu.transpose(0, 1) @ nu), diagonal=1).sum()
-
-        # have to loop because of torch.trace again
-        fourth_term = 0
-        for k in range(K):
-            fourth_term += (nu[:, k] * (phi_var[k].sum() + phi[k].pow(2).sum())).sum()
-
-        nonconstant = (-0.5/(self.sigma_n**2)) * \
-            (first_term + second_term + third_term + fourth_term)
-
-        return constant + nonconstant
-
-    @staticmethod
-    def _entropy_q_v(tau):
-        return ((tau.lgamma().sum(1) - tau.sum(1).lgamma()) - \
-            ((tau - 1.) * digamma(tau)) .sum(1) + \
-            ((tau.sum(1) - 2.) * digamma(tau.sum(1)))).sum()
-
-    @staticmethod
-    def _entropy_q_A(phi_var):
-        K, D = phi_var.shape
-        entropy_q_A = 0
-        for k in range(K):
-            entropy_q_A += 0.5 * (D * (1 + LOG_2PI) + phi_var[k].log().sum()).sum()
-        return entropy_q_A
-
-    @staticmethod
-    def _entropy_q_z(nu):
-        return -(nu * (nu + EPS).log() + (1 - nu) * (1 - nu + EPS).log()).sum()
-
-    def _5_entropy(self, tau, phi_var, nu):
-        """
-        @param tau: (K, 2)
-        @param phi_var: (K, D, D)
-        @param nu: (N, K)
-        @return: ()
-
-        Computes Entropy H[q] for all variational distributions q
-        Same as Finite Approach, just rename entropy_q_pi to entropy_q_v.
-        """
-        return self._entropy_q_v(tau) + \
-               self._entropy_q_A(phi_var) + \
-               self._entropy_q_z(nu)
-
+if __name__ == '__main__':
+    """
+    python -m src.vae will just check that the model works on a ggblocks dataset
+    """
+    fit_infinite_to_ggblocks_vae_exact()

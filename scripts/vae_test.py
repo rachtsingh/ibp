@@ -10,7 +10,7 @@ from matplotlib import pyplot as plt
 # relative path import hack
 import sys, os
 sys.path.insert(0, os.path.abspath('..'))
-
+sys.path.insert(0, os.path.abspath('.'))
 
 # inside-package imports below here
 from src.vae import InfiniteIBP_VAE

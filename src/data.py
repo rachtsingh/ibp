@@ -36,12 +36,15 @@ def generate_gg_blocks(N):
     This function doesn't sample points from the IBP: it uses a Bernoulli
     distribution for Z
     """
+    import numpy as np
 
     # we have to make sure there's at least one feature in each sample
-    Z = Bernoulli(0.25).sample((N, 4))
+    Z = Bernoulli(0.5).sample((N, 4))
     while (Z.sum(1) == 0).any():
         msk = (Z.sum(1) == 0)
-        Z[msk] = Bernoulli(0.25).sample((msk.sum().item(), 4))
+        Z[msk] = Bernoulli(0.5).sample((msk.sum().item(), 4))
+    unique, counts = np.unique(Z.sum(1).numpy(), return_counts=True)
+    print("# of points with 1 feature", float(counts[0])/float(N))
     A = gg_blocks()
     return Z @ A
 

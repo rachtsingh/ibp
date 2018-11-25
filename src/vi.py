@@ -48,7 +48,7 @@ class InfiniteIBP(object):
         # we don't know N, but we'll still initialize everything else
         self.init_variables()
 
-    def init_variables(self, N=100):
+    def init_variables(self):
         # NOTE: tau must be positive, so we use the @property below
         self._tau = torch.rand(self.K, 2)
         self.phi = torch.randn(self.K, self.D) * self.sigma_a
@@ -104,7 +104,6 @@ class InfiniteIBP(object):
             print("model._r requires grad True")
             self._r.requires_grad = True
 
-
     def eval(self):
         self._tau.requires_grad = False
         self.phi.requires_grad = False
@@ -145,12 +144,12 @@ class InfiniteIBP(object):
         This is the evidence lower bound evaluated at X, when X is of shape (N, D)
         i.e. log p_K(X | theta) geq ELBO
         """
-        
+
         # Cross entropy between variational distributions over temperatures
         # versus prior over temperatures (prior is uniform categorical)
         probs = torch.ones(self.M) / self.M
         temp_cross_entropy_q_p =  -1.0*torch.mul(self.r,probs.log()).sum()
-        
+
         # Entropy of variational distribution over temperature
         q_y = torch.distributions.Categorical(self.r)
         temp_entropy_q = q_y.entropy().sum()
@@ -160,7 +159,7 @@ class InfiniteIBP(object):
         c = self._3_feature_prob(self.phi_var, self.phi).sum()
         d_tempered = self._4_likelihood_tempered(X,self.nu,self.phi_var,self.phi).sum()
         e = self._5_entropy(self.tau, self.phi_var, self.nu).sum()
-        return a + b + c + d_tempered + e + temp_cross_entropy_q_p + temp_entropy_q 
+        return a + b + c + d_tempered + e + temp_cross_entropy_q_p + temp_entropy_q
 
     def _1_feature_prob(self, tau):
         """
@@ -410,10 +409,10 @@ def fit_infinite_to_ggblocks_cavi():
     N = 500
     X = generate_gg_blocks_dataset(N, 0.05)
 
-    model = InfiniteIBP(4., 6, 0.05, 0.05, 36)
+    model = InfiniteIBP(1.5, 6, 0.05, 0.05, 36)
     model.init_z(N)
 
-    for i in range(10):
+    for i in range(100):
         model.cavi(X)
         print("[Epoch {:<3}] ELBO = {:.3f}".format(i + 1, model.elbo(X).item()))
 
@@ -425,13 +424,13 @@ def fit_infinite_to_ggblocks_advi_exact(tempering=False):
 
     SCALE = 1.
 
-    N = 500
-    X = generate_gg_blocks_dataset(N, 0.05)
+    N = 100
+    X = generate_gg_blocks_dataset(N, 0.5)
 
     # for i in range(10):
-    model = InfiniteIBP(1.5, 6, 0.1, 0.5, 36)
-    model.phi.data[:4] = SCALE * gg_blocks()
-    visualize_A(model.phi.detach().numpy())
+    model = InfiniteIBP(1.5, 6, 0.5, 0.5, 36)
+    # model.phi.data[:4] = SCALE * gg_blocks()
+    # visualize_A(model.phi.detach().numpy())
     model.init_z(N)
 
     if tempering:
@@ -442,9 +441,12 @@ def fit_infinite_to_ggblocks_advi_exact(tempering=False):
 
     optimizer = torch.optim.Adam(model.parameters(tempering=tempering), 0.01)
 
-    plots = np.zeros((1000, 6, 36))
+    T = 5000
 
-    for i in range(1000):
+    elbos = np.zeros(T)
+    plots = np.zeros((T, 6, 36))
+
+    for i in range(T):
         optimizer.zero_grad()
         loss = 0.0
         if tempering:
@@ -456,19 +458,18 @@ def fit_infinite_to_ggblocks_advi_exact(tempering=False):
         loss.backward()
         optimizer.step()
 
-        # test_elbo_components((model, X))
-        # test_q_E_logstick((model.tau.detach(), model.K))
         plots[i] = model.phi.detach().numpy().reshape((6, 36))
+        elbos[i] = -loss.item()
+
         assert loss.item() != np.inf, "loss is inf"
 
-    np.save('features.npy', plots)
-    # visualize_A(model.phi.detach().numpy())
-    # import ipdb; ipdb.set_trace()
+    np.save('features_advi_exact.npy', plots)
+    np.save('elbo_advi_exact.npy', elbos)
 
 if __name__ == '__main__':
     """
     python src/vi.py will just check that the model works on a ggblocks dataset
     """
-    #fit_infinite_to_ggblocks_cavi()
-    fit_infinite_to_ggblocks_advi_exact()
-    #fit_infinite_to_ggblocks_advi_exact(tempering=True)
+    fit_infinite_to_ggblocks_cavi()
+    # fit_infinite_to_ggblocks_advi_exact()
+    # fit_infinite_to_ggblocks_advi_exact(tempering=True)
