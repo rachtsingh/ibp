@@ -1,0 +1,17 @@
+
+Diff Rates:
+
+if tempering:
+        print("Initing optimizer with tempering params included")
+        optimizer = torch.optim.Adam([{'params': [model._nu, model._tau, model._r]},
+                                  {'params': [model._phi_var, model.phi], 'lr': 0.003}], lr=0.1)
+    else:
+        optimizer = torch.optim.Adam([{'params': [model._nu, model._tau]},
+                                  {'params': [model._phi_var, model.phi], 'lr': 0.003}], lr=0.1)
+
+
+Same Rates:
+
+0.01 for everything
+
+
